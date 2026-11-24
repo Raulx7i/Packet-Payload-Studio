@@ -4,7 +4,7 @@ import hashlib
 import math
 import re
 import tkinter as tk
-from tkinter import ttk, filedialog, messagebox
+from tkinter import filedialog, messagebox
 
 FORMATS = ["C Array", "Hex Dump", "YAML", "ASCII", "UTF-8", "EBCDIC", "Raw"]
 
@@ -161,160 +161,224 @@ class PacketConverterApp:
     def __init__(self, root: tk.Tk):
         self.root = root
         self.root.title("Wireshark Stream & Payload Converter")
-        self.root.geometry("1240x760")
-        self.root.minsize(960, 560)
+        self.root.geometry("1260x780")
+        self.root.minsize(980, 600)
 
+        # Clean, high-contrast palette safe across all macOS Tk versions
+        self.bg_root = "#1e222a"
+        self.bg_card = "#282c34"
+        self.bg_editor = "#161920"
+        self.fg_primary = "#e5e9f0"
+        self.fg_output = "#98c379"
+        self.fg_error = "#e06c75"
+        self.accent_blue = "#61afef"
+        self.accent_green = "#98c379"
+
+        self.root.configure(bg=self.bg_root)
         self.current_bytes = b""
-        self.in_fmt = "C Array"
-        self.out_fmt = "ASCII"
 
-        self._setup_theme()
+        self.in_fmt_var = tk.StringVar(value="C Array")
+        self.out_fmt_var = tk.StringVar(value="ASCII")
+        self.ebcdic_var = tk.StringVar(value="cp037")
+        self.ascii_dots = tk.BooleanVar(value=False)
+        self.status_var = tk.StringVar(value="Ready")
+
         self._build_ui()
         self._load_sample()
 
-        # Force macOS window render & foreground focus
         self.root.update_idletasks()
         self.root.lift()
-        self.root.attributes("-topmost", True)
-        self.root.after(150, lambda: self.root.attributes("-topmost", False))
-
-    def _setup_theme(self):
-        style = ttk.Style(self.root)
-        # "default" or "classic" renders reliably on both Tk 8.5 and Tk 8.6 on macOS
-        available = style.theme_names()
-        style.theme_use("clam" if "clam" in available else "default")
-
-        style.configure("TNotebook", background="#252536", borderwidth=0)
-        style.configure("TNotebook.Tab", padding=[10, 5], font=("Menlo", 11, "bold"))
-        style.map(
-            "TNotebook.Tab",
-            background=[("selected", "#89b4fa"), ("!selected", "#313244")],
-            foreground=[("selected", "#11111b"), ("!selected", "#cdd6f4")],
-        )
 
     def _build_ui(self):
-        self.root.configure(bg="#1e1e2e")
+        # Configure root grid: Row 0 = Top Bar, Row 1 = Split Editors, Row 2 = Status Bar
+        self.root.grid_rowconfigure(1, weight=1)
+        self.root.grid_columnconfigure(0, weight=1, uniform="col")
+        self.root.grid_columnconfigure(1, weight=1, uniform="col")
 
-        # --- Top Global Toolbar ---
-        top_bar = tk.Frame(self.root, bg="#252536", padx=12, pady=8)
-        top_bar.pack(side=tk.TOP, fill=tk.X, padx=12, pady=(12, 6))
+        # ================= TOP GLOBAL BAR =================
+        top_bar = tk.Frame(self.root, bg=self.bg_card, padx=14, pady=10)
+        top_bar.grid(row=0, column=0, columnspan=2, sticky="ew", padx=12, pady=(12, 6))
 
         tk.Label(
             top_bar, text="Wireshark Stream & Payload Converter",
-            bg="#252536", fg="#cdd6f4", font=("Helvetica", 14, "bold")
+            bg=self.bg_card, fg=self.fg_primary, font=("Helvetica", 15, "bold")
         ).pack(side=tk.LEFT)
 
-        tk.Button(top_bar, text="Clear All", command=self.clear_all, padx=10).pack(side=tk.RIGHT, padx=(6, 0))
-        tk.Button(top_bar, text="Gunzip Body", command=self.decompress_gzip, padx=10).pack(side=tk.RIGHT, padx=6)
-        tk.Button(top_bar, text="Swap Panes", command=self.swap_panes, padx=10).pack(side=tk.RIGHT, padx=6)
+        tk.Button(top_bar, text="Clear All", command=self.clear_all, padx=10, pady=3).pack(side=tk.RIGHT, padx=(6, 0))
+        tk.Button(top_bar, text="Gunzip Body", command=self.decompress_gzip, padx=10, pady=3).pack(side=tk.RIGHT, padx=6)
+        tk.Button(top_bar, text="Swap Panes", command=self.swap_panes, padx=10, pady=3).pack(side=tk.RIGHT, padx=6)
 
-        self.ebcdic_var = tk.StringVar(value="cp037")
         cp_menu = tk.OptionMenu(top_bar, self.ebcdic_var, "cp037", "cp500", "cp1047", command=lambda _: self.convert())
-        cp_menu.pack(side=tk.RIGHT, padx=(4, 12))
+        cp_menu.config(width=7)
+        cp_menu.pack(side=tk.RIGHT, padx=(4, 14))
         tk.Label(
-            top_bar, text="EBCDIC CP:", bg="#252536", fg="#cdd6f4", font=("Helvetica", 11)
+            top_bar, text="EBCDIC Codepage:", bg=self.bg_card, fg="#abb2bf", font=("Helvetica", 11)
         ).pack(side=tk.RIGHT)
 
-        # --- Bottom Status Bar (pack before expanding middle area) ---
-        status_bar = tk.Frame(self.root, bg="#11111b", padx=12, pady=6)
-        status_bar.pack(side=tk.BOTTOM, fill=tk.X, padx=12, pady=(4, 12))
+        # ================= LEFT PANEL (INPUT) =================
+        left_card = tk.Frame(self.root, bg=self.bg_card, padx=12, pady=10)
+        left_card.grid(row=1, column=0, sticky="nsew", padx=(12, 6), pady=4)
+        left_card.grid_rowconfigure(2, weight=1)
+        left_card.grid_columnconfigure(0, weight=1)
 
-        self.status_var = tk.StringVar(value="Ready")
-        tk.Label(
-            status_bar, textvariable=self.status_var, bg="#11111b", fg="#a6adc8",
-            font=("Menlo", 11)
-        ).pack(side=tk.LEFT)
-
-        # --- Center PanedWindow (Left Input / Right Output) ---
-        paned = tk.PanedWindow(self.root, orient=tk.HORIZONTAL, bg="#1e1e2e", sashwidth=8, bd=0)
-        paned.pack(side=tk.TOP, fill=tk.BOTH, expand=True, padx=12, pady=4)
-
-        # LEFT CARD (INPUT)
-        left_card = tk.Frame(paned, bg="#252536", padx=10, pady=10)
-        left_hdr = tk.Frame(left_card, bg="#252536")
-        left_hdr.pack(side=tk.TOP, fill=tk.X, pady=(0, 6))
+        # Row 0: Input Header + Format Selection Menu
+        left_top = tk.Frame(left_card, bg=self.bg_card)
+        left_top.grid(row=0, column=0, sticky="ew", pady=(0, 8))
 
         tk.Label(
-            left_hdr, text="INPUT FORMAT", bg="#252536", fg="#89b4fa",
+            left_top, text="INPUT FORMAT:", bg=self.bg_card, fg=self.accent_blue,
             font=("Helvetica", 12, "bold")
-        ).pack(side=tk.LEFT)
+        ).pack(side=tk.LEFT, padx=(0, 8))
 
-        tk.Button(left_hdr, text="Load File...", command=self.load_file, padx=8).pack(side=tk.RIGHT, padx=(4, 0))
-        tk.Button(left_hdr, text="Paste", command=self.paste_clipboard, padx=8).pack(side=tk.RIGHT, padx=4)
-        tk.Button(left_hdr, text="Auto-Detect", command=self.auto_detect_input, padx=8).pack(side=tk.RIGHT, padx=4)
+        in_menu = tk.OptionMenu(left_top, self.in_fmt_var, *FORMATS, command=lambda _: self.on_format_change())
+        in_menu.config(width=11, font=("Helvetica", 12, "bold"))
+        in_menu.pack(side=tk.LEFT)
 
-        # Native Notebook Tabs for Input Format
-        self.in_notebook = ttk.Notebook(left_card)
-        self.in_tab_frames = {}
+        tk.Button(left_top, text="Load File...", command=self.load_file, padx=8).pack(side=tk.RIGHT, padx=(4, 0))
+        tk.Button(left_top, text="Paste", command=self.paste_clipboard, padx=8).pack(side=tk.RIGHT, padx=4)
+        tk.Button(left_top, text="Auto-Detect", command=self.auto_detect_input, padx=8).pack(side=tk.RIGHT, padx=4)
+
+        # Row 1: Quick-Select Format Buttons
+        in_pills = tk.Frame(left_card, bg=self.bg_card)
+        in_pills.grid(row=1, column=0, sticky="ew", pady=(0, 8))
+        self.in_pill_btns = {}
         for fmt in FORMATS:
-            tab = tk.Frame(self.in_notebook, bg="#252536", height=1)
-            self.in_notebook.add(tab, text=fmt)
-            self.in_tab_frames[fmt] = tab
-        self.in_notebook.pack(side=tk.TOP, fill=tk.X, pady=(0, 6))
-        self.in_notebook.bind("<<NotebookTabChanged>>", self.on_in_tab)
+            btn = tk.Button(
+                in_pills, text=fmt, font=("Menlo", 10, "bold"), padx=6, pady=2,
+                command=lambda f=fmt: self.set_in_format(f)
+            )
+            btn.pack(side=tk.LEFT, padx=(0, 4))
+            self.in_pill_btns[fmt] = btn
 
-        in_box = tk.Frame(left_card, bg="#181825")
-        in_box.pack(side=tk.TOP, fill=tk.BOTH, expand=True)
+        # Row 2: Input Text Editor (Explicitly configured with high-contrast colors)
+        in_editor_wrap = tk.Frame(left_card, bg=self.bg_editor, bd=1, relief=tk.SUNKEN)
+        in_editor_wrap.grid(row=2, column=0, sticky="nsew")
+        in_editor_wrap.grid_rowconfigure(0, weight=1)
+        in_editor_wrap.grid_columnconfigure(0, weight=1)
 
         self.in_text = tk.Text(
-            in_box, wrap=tk.NONE, bg="#181825", fg="#cdd6f4",
-            insertbackground="#89b4fa", font=("Menlo", 12), relief=tk.FLAT, padx=10, pady=10, undo=True
+            in_editor_wrap,
+            wrap=tk.NONE,
+            bg=self.bg_editor,
+            fg=self.fg_primary,
+            insertbackground=self.accent_blue,
+            selectbackground="#3e4451",
+            selectforeground="#ffffff",
+            font=("Menlo", 13),
+            padx=10,
+            pady=10,
+            undo=True,
+            highlightthickness=0,
+            bd=0
         )
-        in_sy = tk.Scrollbar(in_box, orient=tk.VERTICAL, command=self.in_text.yview)
-        in_sx = tk.Scrollbar(in_box, orient=tk.HORIZONTAL, command=self.in_text.xview)
+        in_sy = tk.Scrollbar(in_editor_wrap, orient=tk.VERTICAL, command=self.in_text.yview)
+        in_sx = tk.Scrollbar(in_editor_wrap, orient=tk.HORIZONTAL, command=self.in_text.xview)
         self.in_text.configure(yscrollcommand=in_sy.set, xscrollcommand=in_sx.set)
-        in_sy.pack(side=tk.RIGHT, fill=tk.Y)
-        in_sx.pack(side=tk.BOTTOM, fill=tk.X)
-        self.in_text.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+
+        self.in_text.grid(row=0, column=0, sticky="nsew")
+        in_sy.grid(row=0, column=1, sticky="ns")
+        in_sx.grid(row=1, column=0, sticky="ew")
         self.in_text.bind("<KeyRelease>", lambda _: self.convert())
 
-        # RIGHT CARD (OUTPUT)
-        right_card = tk.Frame(paned, bg="#252536", padx=10, pady=10)
-        right_hdr = tk.Frame(right_card, bg="#252536")
-        right_hdr.pack(side=tk.TOP, fill=tk.X, pady=(0, 6))
+        # ================= RIGHT PANEL (OUTPUT) =================
+        right_card = tk.Frame(self.root, bg=self.bg_card, padx=12, pady=10)
+        right_card.grid(row=1, column=1, sticky="nsew", padx=(6, 12), pady=4)
+        right_card.grid_rowconfigure(2, weight=1)
+        right_card.grid_columnconfigure(0, weight=1)
+
+        # Row 0: Output Header + Format Selection Menu
+        right_top = tk.Frame(right_card, bg=self.bg_card)
+        right_top.grid(row=0, column=0, sticky="ew", pady=(0, 8))
 
         tk.Label(
-            right_hdr, text="OUTPUT FORMAT", bg="#252536", fg="#a6e3a1",
+            right_top, text="OUTPUT FORMAT:", bg=self.bg_card, fg=self.accent_green,
             font=("Helvetica", 12, "bold")
-        ).pack(side=tk.LEFT)
+        ).pack(side=tk.LEFT, padx=(0, 8))
 
-        tk.Button(right_hdr, text="Save Output...", command=self.save_output, padx=8).pack(side=tk.RIGHT, padx=(4, 0))
-        tk.Button(right_hdr, text="Copy Output", command=self.copy_output, padx=8).pack(side=tk.RIGHT, padx=4)
+        out_menu = tk.OptionMenu(right_top, self.out_fmt_var, *FORMATS, command=lambda _: self.on_format_change())
+        out_menu.config(width=11, font=("Helvetica", 12, "bold"))
+        out_menu.pack(side=tk.LEFT)
 
-        self.ascii_dots = tk.BooleanVar(value=False)
+        tk.Button(right_top, text="Save Output...", command=self.save_output, padx=8).pack(side=tk.RIGHT, padx=(4, 0))
+        tk.Button(right_top, text="Copy Output", command=self.copy_output, padx=8).pack(side=tk.RIGHT, padx=4)
+
         tk.Checkbutton(
-            right_hdr, text="Dots for non-ASCII", variable=self.ascii_dots,
-            bg="#252536", fg="#cdd6f4", selectcolor="#181825", activebackground="#252536",
+            right_top, text="Dots for non-ASCII", variable=self.ascii_dots,
+            bg=self.bg_card, fg=self.fg_primary, selectcolor=self.bg_editor,
+            activebackground=self.bg_card, activeforeground=self.fg_primary,
             font=("Helvetica", 11), command=self.convert
         ).pack(side=tk.RIGHT, padx=8)
 
-        # Native Notebook Tabs for Output Format
-        self.out_notebook = ttk.Notebook(right_card)
-        self.out_tab_frames = {}
+        # Row 1: Quick-Select Output Format Buttons
+        out_pills = tk.Frame(right_card, bg=self.bg_card)
+        out_pills.grid(row=1, column=0, sticky="ew", pady=(0, 8))
+        self.out_pill_btns = {}
         for fmt in FORMATS:
-            tab = tk.Frame(self.out_notebook, bg="#252536", height=1)
-            self.out_notebook.add(tab, text=fmt)
-            self.out_tab_frames[fmt] = tab
-        self.out_notebook.select(self.out_tab_frames["ASCII"])
-        self.out_notebook.pack(side=tk.TOP, fill=tk.X, pady=(0, 6))
-        self.out_notebook.bind("<<NotebookTabChanged>>", self.on_out_tab)
+            btn = tk.Button(
+                out_pills, text=fmt, font=("Menlo", 10, "bold"), padx=6, pady=2,
+                command=lambda f=fmt: self.set_out_format(f)
+            )
+            btn.pack(side=tk.LEFT, padx=(0, 4))
+            self.out_pill_btns[fmt] = btn
 
-        out_box = tk.Frame(right_card, bg="#181825")
-        out_box.pack(side=tk.TOP, fill=tk.BOTH, expand=True)
+        # Row 2: Output Text Editor
+        out_editor_wrap = tk.Frame(right_card, bg=self.bg_editor, bd=1, relief=tk.SUNKEN)
+        out_editor_wrap.grid(row=2, column=0, sticky="nsew")
+        out_editor_wrap.grid_rowconfigure(0, weight=1)
+        out_editor_wrap.grid_columnconfigure(0, weight=1)
 
         self.out_text = tk.Text(
-            out_box, wrap=tk.NONE, bg="#181825", fg="#a6e3a1",
-            insertbackground="#a6e3a1", font=("Menlo", 12), relief=tk.FLAT, padx=10, pady=10
+            out_editor_wrap,
+            wrap=tk.NONE,
+            bg=self.bg_editor,
+            fg=self.fg_output,
+            insertbackground=self.accent_green,
+            selectbackground="#3e4451",
+            selectforeground="#ffffff",
+            font=("Menlo", 13),
+            padx=10,
+            pady=10,
+            highlightthickness=0,
+            bd=0
         )
-        out_sy = tk.Scrollbar(out_box, orient=tk.VERTICAL, command=self.out_text.yview)
-        out_sx = tk.Scrollbar(out_box, orient=tk.HORIZONTAL, command=self.out_text.xview)
+        out_sy = tk.Scrollbar(out_editor_wrap, orient=tk.VERTICAL, command=self.out_text.yview)
+        out_sx = tk.Scrollbar(out_editor_wrap, orient=tk.HORIZONTAL, command=self.out_text.xview)
         self.out_text.configure(yscrollcommand=out_sy.set, xscrollcommand=out_sx.set)
-        out_sy.pack(side=tk.RIGHT, fill=tk.Y)
-        out_sx.pack(side=tk.BOTTOM, fill=tk.X)
-        self.out_text.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
 
-        paned.add(left_card, stretch="always")
-        paned.add(right_card, stretch="always")
+        self.out_text.grid(row=0, column=0, sticky="nsew")
+        out_sy.grid(row=0, column=1, sticky="ns")
+        out_sx.grid(row=1, column=0, sticky="ew")
+
+        # ================= BOTTOM STATUS BAR =================
+        status_bar = tk.Frame(self.root, bg="#12141a", padx=14, pady=8)
+        status_bar.grid(row=2, column=0, columnspan=2, sticky="ew", padx=12, pady=(4, 12))
+
+        tk.Label(
+            status_bar, textvariable=self.status_var, bg="#12141a", fg="#abb2bf",
+            font=("Menlo", 11)
+        ).pack(side=tk.LEFT)
+
+        self._highlight_active_pills()
+
+    def _highlight_active_pills(self):
+        cur_in = self.in_fmt_var.get()
+        cur_out = self.out_fmt_var.get()
+        for fmt, btn in self.in_pill_btns.items():
+            btn.configure(relief=tk.SUNKEN if fmt == cur_in else tk.RAISED)
+        for fmt, btn in self.out_pill_btns.items():
+            btn.configure(relief=tk.SUNKEN if fmt == cur_out else tk.RAISED)
+
+    def set_in_format(self, fmt: str):
+        self.in_fmt_var.set(fmt)
+        self.on_format_change()
+
+    def set_out_format(self, fmt: str):
+        self.out_fmt_var.set(fmt)
+        self.on_format_change()
+
+    def on_format_change(self):
+        self._highlight_active_pills()
+        self.convert()
 
     def _load_sample(self):
         sample = (
@@ -325,17 +389,8 @@ class PacketConverterApp:
             "0x74, 0x70, 0x66, 0x6f, 0x72, 0x65, 0x76, 0x65,\n"
             "0x72, 0x2e, 0x63, 0x6f, 0x6d, 0x0d, 0x0a, 0x0d, 0x0a };"
         )
+        self.in_text.delete("1.0", tk.END)
         self.in_text.insert("1.0", sample)
-        self.convert()
-
-    def on_in_tab(self, _event=None):
-        idx = self.in_notebook.index(self.in_notebook.select())
-        self.in_fmt = FORMATS[idx]
-        self.convert()
-
-    def on_out_tab(self, _event=None):
-        idx = self.out_notebook.index(self.out_notebook.select())
-        self.out_fmt = FORMATS[idx]
         self.convert()
 
     def convert(self):
@@ -347,12 +402,12 @@ class PacketConverterApp:
             return
 
         try:
-            data = ConversionEngine.to_bytes(raw_in, self.in_fmt, self.ebcdic_var.get())
+            data = ConversionEngine.to_bytes(raw_in, self.in_fmt_var.get(), self.ebcdic_var.get())
             self.current_bytes = data
             rendered = ConversionEngine.from_bytes(
-                data, self.out_fmt, self.ebcdic_var.get(), self.ascii_dots.get()
+                data, self.out_fmt_var.get(), self.ebcdic_var.get(), self.ascii_dots.get()
             )
-            self.out_text.configure(fg="#a6e3a1")
+            self.out_text.configure(fg=self.fg_output)
             self.out_text.delete("1.0", tk.END)
             self.out_text.insert("1.0", rendered)
 
@@ -363,7 +418,7 @@ class PacketConverterApp:
                 f"Bytes: {len(data):,}  |  Entropy: {entropy:.2f}/8.00{ent_hint}  |  SHA-256: {sha_short}..."
             )
         except Exception as exc:
-            self.out_text.configure(fg="#f38ba8")
+            self.out_text.configure(fg=self.fg_error)
             self.out_text.delete("1.0", tk.END)
             self.out_text.insert("1.0", f"[Conversion Error]\n{exc}")
             self.status_var.set(f"Error: {exc}")
@@ -371,16 +426,16 @@ class PacketConverterApp:
     def auto_detect_input(self):
         raw_in = self.in_text.get("1.0", "end-1c")
         detected = ConversionEngine.auto_detect(raw_in)
-        self.in_fmt = detected
-        self.in_notebook.select(self.in_tab_frames[detected])
-        self.convert()
+        self.in_fmt_var.set(detected)
+        self.on_format_change()
 
     def swap_panes(self):
         out_val = self.out_text.get("1.0", "end-1c")
-        old_in, old_out = self.in_fmt, self.out_fmt
-        self.in_fmt, self.out_fmt = old_out, old_in
-        self.in_notebook.select(self.in_tab_frames[old_out])
-        self.out_notebook.select(self.out_tab_frames[old_in])
+        old_in = self.in_fmt_var.get()
+        old_out = self.out_fmt_var.get()
+        self.in_fmt_var.set(old_out)
+        self.out_fmt_var.set(old_in)
+        self._highlight_active_pills()
         self.in_text.delete("1.0", tk.END)
         self.in_text.insert("1.0", out_val)
         self.convert()
@@ -392,7 +447,7 @@ class PacketConverterApp:
             unzipped = ConversionEngine.try_gunzip(self.current_bytes)
             self.current_bytes = unzipped
             rendered = ConversionEngine.from_bytes(
-                unzipped, self.out_fmt, self.ebcdic_var.get(), self.ascii_dots.get()
+                unzipped, self.out_fmt_var.get(), self.ebcdic_var.get(), self.ascii_dots.get()
             )
             self.out_text.delete("1.0", tk.END)
             self.out_text.insert("1.0", rendered)
@@ -427,14 +482,14 @@ class PacketConverterApp:
             self.in_text.insert("1.0", text_val)
             self.auto_detect_input()
         except UnicodeDecodeError:
-            self.in_fmt = "Raw"
-            self.in_notebook.select(self.in_tab_frames["Raw"])
+            self.in_fmt_var.set("Raw")
+            self._highlight_active_pills()
             self.in_text.delete("1.0", "end")
             self.in_text.insert("1.0", raw_bytes.decode("latin-1"))
             self.convert()
 
     def save_output(self):
-        if self.out_fmt == "Raw":
+        if self.out_fmt_var.get() == "Raw":
             path = filedialog.asksaveasfilename(title="Save Raw Binary", defaultextension=".bin")
             if path:
                 with open(path, "wb") as f:
