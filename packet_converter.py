@@ -8,6 +8,22 @@ from tkinter import filedialog, messagebox
 
 FORMATS = ["C Array", "Hex Dump", "YAML", "ASCII", "UTF-8", "EBCDIC", "Raw"]
 
+# Nord Frost Palette (Low-Glare Arctic Slate & Ice Blue)
+NORD = {
+    "bg_window": "#2E3440",      # Polar Night 0 (Base translucent backdrop)
+    "bg_card": "#3B4252",        # Polar Night 1 (Elevated frosted panels)
+    "bg_elevated": "#434C5E",    # Polar Night 2 (Inactive pills / controls)
+    "bg_editor": "#242933",      # Deep Slate (Crisp editor surface)
+    "border": "#4C566A",         # Polar Night 3 (Subtle hairline borders)
+    "fg_main": "#ECEFF4",        # Snow Storm 2 (Primary readable text)
+    "fg_muted": "#D8DEE9",       # Snow Storm 0 (Labels & status)
+    "frost_cyan": "#88C0D0",     # Frost 1 (Input active accent)
+    "frost_blue": "#81A1C1",     # Frost 2 (Secondary buttons)
+    "aurora_green": "#A3BE8C",   # Aurora Green (Output text & active accent)
+    "aurora_red": "#BF616A",     # Aurora Red (Error highlight)
+    "text_dark": "#2E3440",      # Dark text for active bright pills
+}
+
 
 class ConversionEngine:
     """Hub-and-spoke converter: Any Format -> canonical bytes -> Any Format."""
@@ -161,11 +177,15 @@ class PacketConverterApp:
     def __init__(self, root: tk.Tk):
         self.root = root
         self.root.title("Wireshark Stream & Payload Converter")
-        self.root.geometry("1260x780")
-        self.root.minsize(980, 600)
+        self.root.geometry("1320x800")
+        self.root.minsize(1060, 620)
+        self.root.configure(bg=NORD["bg_window"])
+
+        # Semi-transparent frosted glass window opacity (adjustable via slider)
+        self.alpha_var = tk.DoubleVar(value=0.93)
+        self._apply_frosted_glass()
 
         self.current_bytes = b""
-
         self.in_fmt_var = tk.StringVar(value="C Array")
         self.out_fmt_var = tk.StringVar(value="ASCII")
         self.ebcdic_var = tk.StringVar(value="cp037")
@@ -175,63 +195,142 @@ class PacketConverterApp:
         self._build_ui()
         self._load_sample()
 
+    def _apply_frosted_glass(self):
+        try:
+            self.root.wm_attributes("-alpha", self.alpha_var.get())
+        except tk.TclError:
+            pass
+
+    def _on_opacity_slide(self, val: str):
+        try:
+            self.root.wm_attributes("-alpha", float(val))
+        except tk.TclError:
+            pass
+
+    def _make_pill(self, parent, text, cmd, bg=NORD["bg_elevated"], fg=NORD["fg_main"], padx=10, pady=4):
+        lbl = tk.Label(
+            parent,
+            text=text,
+            bg=bg,
+            fg=fg,
+            font=("Helvetica", 11, "bold"),
+            padx=padx,
+            pady=pady,
+            cursor="pointinghand",
+        )
+        lbl.bind("<Button-1>", lambda _e: cmd())
+        return lbl
+
     def _build_ui(self):
         self.root.grid_rowconfigure(1, weight=1)
         self.root.grid_columnconfigure(0, weight=1, uniform="col")
         self.root.grid_columnconfigure(1, weight=1, uniform="col")
 
-        # ================= TOP GLOBAL BAR =================
-        top_bar = tk.Frame(self.root, padx=12, pady=8, relief=tk.GROOVE, bd=1)
-        top_bar.grid(row=0, column=0, columnspan=2, sticky="ew", padx=12, pady=(10, 6))
+        # ================= TOP FROSTED HEADER BAR =================
+        top_bar = tk.Frame(
+            self.root, bg=NORD["bg_card"], padx=14, pady=10,
+            highlightbackground=NORD["border"], highlightthickness=1
+        )
+        top_bar.grid(row=0, column=0, columnspan=2, sticky="ew", padx=14, pady=(12, 6))
 
         tk.Label(
             top_bar, text="Wireshark Stream & Payload Converter",
-            font=("Helvetica", 15, "bold")
+            bg=NORD["bg_card"], fg=NORD["fg_main"], font=("Helvetica", 15, "bold")
         ).pack(side=tk.LEFT)
 
-        tk.Button(top_bar, text="Clear All", command=self.clear_all, padx=10).pack(side=tk.RIGHT, padx=(6, 0))
-        tk.Button(top_bar, text="Gunzip Body", command=self.decompress_gzip, padx=10).pack(side=tk.RIGHT, padx=6)
-        tk.Button(top_bar, text="Swap Panes", command=self.swap_panes, padx=10).pack(side=tk.RIGHT, padx=6)
+        # Right-side global actions
+        self._make_pill(
+            top_bar, "Clear All", self.clear_all,
+            bg=NORD["bg_elevated"], fg=NORD["fg_muted"]
+        ).pack(side=tk.RIGHT, padx=(6, 0))
 
+        self._make_pill(
+            top_bar, "Gunzip Body", self.decompress_gzip,
+            bg=NORD["bg_elevated"], fg=NORD["frost_cyan"]
+        ).pack(side=tk.RIGHT, padx=6)
+
+        self._make_pill(
+            top_bar, "Swap Panes", self.swap_panes,
+            bg=NORD["frost_blue"], fg=NORD["text_dark"]
+        ).pack(side=tk.RIGHT, padx=6)
+
+        # EBCDIC Codepage Dropdown
         cp_menu = tk.OptionMenu(top_bar, self.ebcdic_var, "cp037", "cp500", "cp1047", command=lambda _: self.convert())
-        cp_menu.config(width=7)
+        cp_menu.configure(
+            bg=NORD["bg_elevated"], fg=NORD["fg_main"],
+            activebackground=NORD["border"], activeforeground=NORD["fg_main"],
+            highlightthickness=0, bd=0, font=("Menlo", 11)
+        )
         cp_menu.pack(side=tk.RIGHT, padx=(4, 14))
-        tk.Label(top_bar, text="EBCDIC Codepage:", font=("Helvetica", 11)).pack(side=tk.RIGHT)
+        tk.Label(
+            top_bar, text="EBCDIC:", bg=NORD["bg_card"], fg=NORD["fg_muted"], font=("Helvetica", 11)
+        ).pack(side=tk.RIGHT)
 
-        # ================= LEFT PANEL (INPUT) =================
-        left_card = tk.LabelFrame(self.root, text=" INPUT STREAM ", font=("Helvetica", 12, "bold"), padx=10, pady=8)
-        left_card.grid(row=1, column=0, sticky="nsew", padx=(12, 6), pady=4)
+        # Glass Opacity Slider
+        opacity_scale = tk.Scale(
+            top_bar, from_=0.75, to=1.0, resolution=0.01, orient=tk.HORIZONTAL,
+            variable=self.alpha_var, command=self._on_opacity_slide,
+            showvalue=False, length=85, sliderlength=14,
+            bg=NORD["bg_card"], troughcolor=NORD["bg_editor"],
+            highlightthickness=0, bd=0
+        )
+        opacity_scale.pack(side=tk.RIGHT, padx=(4, 14))
+        tk.Label(
+            top_bar, text="Glass:", bg=NORD["bg_card"], fg=NORD["fg_muted"], font=("Helvetica", 11)
+        ).pack(side=tk.RIGHT)
+
+        # ================= LEFT CARD (INPUT STREAM) =================
+        left_card = tk.Frame(
+            self.root, bg=NORD["bg_card"], padx=12, pady=10,
+            highlightbackground=NORD["border"], highlightthickness=1
+        )
+        left_card.grid(row=1, column=0, sticky="nsew", padx=(14, 7), pady=4)
         left_card.grid_rowconfigure(2, weight=1)
         left_card.grid_columnconfigure(0, weight=1)
 
-        # Row 0: Input Format Dropdown + File/Clipboard Actions
-        left_top = tk.Frame(left_card)
-        left_top.grid(row=0, column=0, sticky="ew", pady=(0, 6))
+        # Row 0: Input Dropdown + File/Clipboard Actions
+        left_top = tk.Frame(left_card, bg=NORD["bg_card"])
+        left_top.grid(row=0, column=0, sticky="ew", pady=(0, 8))
 
-        tk.Label(left_top, text="Format:", font=("Helvetica", 12, "bold")).pack(side=tk.LEFT, padx=(0, 6))
+        tk.Label(
+            left_top, text="INPUT:", bg=NORD["bg_card"], fg=NORD["frost_cyan"],
+            font=("Helvetica", 12, "bold")
+        ).pack(side=tk.LEFT, padx=(0, 6))
 
         in_menu = tk.OptionMenu(left_top, self.in_fmt_var, *FORMATS, command=lambda _: self.on_format_change())
-        in_menu.config(width=11, font=("Helvetica", 12, "bold"))
+        in_menu.configure(
+            bg=NORD["bg_elevated"], fg=NORD["fg_main"],
+            activebackground=NORD["border"], activeforeground=NORD["fg_main"],
+            highlightthickness=0, bd=0, font=("Helvetica", 11, "bold"), width=9
+        )
         in_menu.pack(side=tk.LEFT)
 
-        tk.Button(left_top, text="Load File...", command=self.load_file, padx=8).pack(side=tk.RIGHT, padx=(4, 0))
-        tk.Button(left_top, text="Paste", command=self.paste_clipboard, padx=8).pack(side=tk.RIGHT, padx=4)
-        tk.Button(left_top, text="Auto-Detect", command=self.auto_detect_input, padx=8).pack(side=tk.RIGHT, padx=4)
+        self._make_pill(left_top, "Load File...", self.load_file, padx=8, pady=3).pack(side=tk.RIGHT, padx=(4, 0))
+        self._make_pill(left_top, "Paste", self.paste_clipboard, padx=8, pady=3).pack(side=tk.RIGHT, padx=4)
+        self._make_pill(
+            left_top, "Auto-Detect", self.auto_detect_input,
+            bg=NORD["frost_cyan"], fg=NORD["text_dark"], padx=8, pady=3
+        ).pack(side=tk.RIGHT, padx=4)
 
-        # Row 1: Quick-Select Format Buttons
-        in_pills = tk.Frame(left_card)
-        in_pills.grid(row=1, column=0, sticky="ew", pady=(0, 8))
+        # Row 1: Equal-Width Format Selection Tabs (All 7 visible without clipping)
+        in_tabs = tk.Frame(left_card, bg=NORD["bg_editor"], padx=3, pady=3)
+        in_tabs.grid(row=1, column=0, sticky="ew", pady=(0, 8))
         self.in_pill_btns = {}
-        for fmt in FORMATS:
-            btn = tk.Button(
-                in_pills, text=fmt, font=("Menlo", 10, "bold"), padx=6, pady=2,
-                command=lambda f=fmt: self.set_in_format(f)
+        for idx, fmt in enumerate(FORMATS):
+            in_tabs.grid_columnconfigure(idx, weight=1, uniform="intab")
+            lbl = tk.Label(
+                in_tabs, text=fmt, font=("Menlo", 10, "bold"),
+                pady=5, cursor="pointinghand"
             )
-            btn.pack(side=tk.LEFT, padx=(0, 4))
-            self.in_pill_btns[fmt] = btn
+            lbl.grid(row=0, column=idx, sticky="ew", padx=1)
+            lbl.bind("<Button-1>", lambda _e, f=fmt: self.set_in_format(f))
+            self.in_pill_btns[fmt] = lbl
 
-        # Row 2: Input Text Editor (Native high-contrast white editor with black text)
-        in_editor_wrap = tk.Frame(left_card, bd=1, relief=tk.SUNKEN)
+        # Row 2: Input Editor
+        in_editor_wrap = tk.Frame(
+            left_card, bg=NORD["bg_editor"],
+            highlightbackground=NORD["border"], highlightthickness=1
+        )
         in_editor_wrap.grid(row=2, column=0, sticky="nsew")
         in_editor_wrap.grid_rowconfigure(0, weight=1)
         in_editor_wrap.grid_columnconfigure(0, weight=1)
@@ -239,13 +338,17 @@ class PacketConverterApp:
         self.in_text = tk.Text(
             in_editor_wrap,
             wrap=tk.NONE,
-            bg="#ffffff",
-            fg="#111111",
-            insertbackground="#000000",
+            bg=NORD["bg_editor"],
+            fg=NORD["fg_main"],
+            insertbackground=NORD["frost_cyan"],
+            selectbackground=NORD["border"],
+            selectforeground=NORD["fg_main"],
             font=("Menlo", 13),
-            padx=10,
+            padx=12,
             pady=10,
-            undo=True
+            undo=True,
+            highlightthickness=0,
+            bd=0
         )
         in_sy = tk.Scrollbar(in_editor_wrap, orient=tk.VERTICAL, command=self.in_text.yview)
         in_sx = tk.Scrollbar(in_editor_wrap, orient=tk.HORIZONTAL, command=self.in_text.xview)
@@ -256,44 +359,64 @@ class PacketConverterApp:
         in_sx.grid(row=1, column=0, sticky="ew")
         self.in_text.bind("<KeyRelease>", lambda _: self.convert())
 
-        # ================= RIGHT PANEL (OUTPUT) =================
-        right_card = tk.LabelFrame(self.root, text=" CONVERTED OUTPUT ", font=("Helvetica", 12, "bold"), padx=10, pady=8)
-        right_card.grid(row=1, column=1, sticky="nsew", padx=(6, 12), pady=4)
+        # ================= RIGHT CARD (CONVERTED OUTPUT) =================
+        right_card = tk.Frame(
+            self.root, bg=NORD["bg_card"], padx=12, pady=10,
+            highlightbackground=NORD["border"], highlightthickness=1
+        )
+        right_card.grid(row=1, column=1, sticky="nsew", padx=(7, 14), pady=4)
         right_card.grid_rowconfigure(2, weight=1)
         right_card.grid_columnconfigure(0, weight=1)
 
-        # Row 0: Output Format Dropdown + Copy/Save Actions
-        right_top = tk.Frame(right_card)
-        right_top.grid(row=0, column=0, sticky="ew", pady=(0, 6))
+        # Row 0: Output Dropdown + Actions
+        right_top = tk.Frame(right_card, bg=NORD["bg_card"])
+        right_top.grid(row=0, column=0, sticky="ew", pady=(0, 8))
 
-        tk.Label(right_top, text="Format:", font=("Helvetica", 12, "bold")).pack(side=tk.LEFT, padx=(0, 6))
+        tk.Label(
+            right_top, text="OUTPUT:", bg=NORD["bg_card"], fg=NORD["aurora_green"],
+            font=("Helvetica", 12, "bold")
+        ).pack(side=tk.LEFT, padx=(0, 6))
 
         out_menu = tk.OptionMenu(right_top, self.out_fmt_var, *FORMATS, command=lambda _: self.on_format_change())
-        out_menu.config(width=11, font=("Helvetica", 12, "bold"))
+        out_menu.configure(
+            bg=NORD["bg_elevated"], fg=NORD["fg_main"],
+            activebackground=NORD["border"], activeforeground=NORD["fg_main"],
+            highlightthickness=0, bd=0, font=("Helvetica", 11, "bold"), width=9
+        )
         out_menu.pack(side=tk.LEFT)
 
-        tk.Button(right_top, text="Save Output...", command=self.save_output, padx=8).pack(side=tk.RIGHT, padx=(4, 0))
-        tk.Button(right_top, text="Copy Output", command=self.copy_output, padx=8).pack(side=tk.RIGHT, padx=4)
+        self._make_pill(right_top, "Save...", self.save_output, padx=8, pady=3).pack(side=tk.RIGHT, padx=(4, 0))
+        self._make_pill(
+            right_top, "Copy Output", self.copy_output,
+            bg=NORD["aurora_green"], fg=NORD["text_dark"], padx=8, pady=3
+        ).pack(side=tk.RIGHT, padx=4)
 
         tk.Checkbutton(
-            right_top, text="Dots for non-ASCII", variable=self.ascii_dots,
+            right_top, text="Non-ASCII dots", variable=self.ascii_dots,
+            bg=NORD["bg_card"], fg=NORD["fg_muted"], selectcolor=NORD["bg_editor"],
+            activebackground=NORD["bg_card"], activeforeground=NORD["fg_main"],
             font=("Helvetica", 11), command=self.convert
-        ).pack(side=tk.RIGHT, padx=8)
+        ).pack(side=tk.RIGHT, padx=6)
 
-        # Row 1: Quick-Select Output Format Buttons
-        out_pills = tk.Frame(right_card)
-        out_pills.grid(row=1, column=0, sticky="ew", pady=(0, 8))
+        # Row 1: Equal-Width Output Format Tabs
+        out_tabs = tk.Frame(right_card, bg=NORD["bg_editor"], padx=3, pady=3)
+        out_tabs.grid(row=1, column=0, sticky="ew", pady=(0, 8))
         self.out_pill_btns = {}
-        for fmt in FORMATS:
-            btn = tk.Button(
-                out_pills, text=fmt, font=("Menlo", 10, "bold"), padx=6, pady=2,
-                command=lambda f=fmt: self.set_out_format(f)
+        for idx, fmt in enumerate(FORMATS):
+            out_tabs.grid_columnconfigure(idx, weight=1, uniform="outtab")
+            lbl = tk.Label(
+                out_tabs, text=fmt, font=("Menlo", 10, "bold"),
+                pady=5, cursor="pointinghand"
             )
-            btn.pack(side=tk.LEFT, padx=(0, 4))
-            self.out_pill_btns[fmt] = btn
+            lbl.grid(row=0, column=idx, sticky="ew", padx=1)
+            lbl.bind("<Button-1>", lambda _e, f=fmt: self.set_out_format(f))
+            self.out_pill_btns[fmt] = lbl
 
-        # Row 2: Output Text Editor
-        out_editor_wrap = tk.Frame(right_card, bd=1, relief=tk.SUNKEN)
+        # Row 2: Output Editor
+        out_editor_wrap = tk.Frame(
+            right_card, bg=NORD["bg_editor"],
+            highlightbackground=NORD["border"], highlightthickness=1
+        )
         out_editor_wrap.grid(row=2, column=0, sticky="nsew")
         out_editor_wrap.grid_rowconfigure(0, weight=1)
         out_editor_wrap.grid_columnconfigure(0, weight=1)
@@ -301,12 +424,16 @@ class PacketConverterApp:
         self.out_text = tk.Text(
             out_editor_wrap,
             wrap=tk.NONE,
-            bg="#f8f9fa",
-            fg="#0b3d0b",
-            insertbackground="#000000",
+            bg=NORD["bg_editor"],
+            fg=NORD["aurora_green"],
+            insertbackground=NORD["aurora_green"],
+            selectbackground=NORD["border"],
+            selectforeground=NORD["fg_main"],
             font=("Menlo", 13),
-            padx=10,
-            pady=10
+            padx=12,
+            pady=10,
+            highlightthickness=0,
+            bd=0
         )
         out_sy = tk.Scrollbar(out_editor_wrap, orient=tk.VERTICAL, command=self.out_text.yview)
         out_sx = tk.Scrollbar(out_editor_wrap, orient=tk.HORIZONTAL, command=self.out_text.xview)
@@ -317,11 +444,15 @@ class PacketConverterApp:
         out_sx.grid(row=1, column=0, sticky="ew")
 
         # ================= BOTTOM STATUS BAR =================
-        status_bar = tk.Frame(self.root, padx=12, pady=6, relief=tk.GROOVE, bd=1)
-        status_bar.grid(row=2, column=0, columnspan=2, sticky="ew", padx=12, pady=(4, 10))
+        status_bar = tk.Frame(
+            self.root, bg=NORD["bg_card"], padx=14, pady=8,
+            highlightbackground=NORD["border"], highlightthickness=1
+        )
+        status_bar.grid(row=2, column=0, columnspan=2, sticky="ew", padx=14, pady=(4, 12))
 
         tk.Label(
-            status_bar, textvariable=self.status_var, font=("Menlo", 11)
+            status_bar, textvariable=self.status_var, bg=NORD["bg_card"], fg=NORD["fg_muted"],
+            font=("Menlo", 11)
         ).pack(side=tk.LEFT)
 
         self._highlight_active_pills()
@@ -329,10 +460,16 @@ class PacketConverterApp:
     def _highlight_active_pills(self):
         cur_in = self.in_fmt_var.get()
         cur_out = self.out_fmt_var.get()
-        for fmt, btn in self.in_pill_btns.items():
-            btn.configure(relief=tk.SUNKEN if fmt == cur_in else tk.RAISED)
-        for fmt, btn in self.out_pill_btns.items():
-            btn.configure(relief=tk.SUNKEN if fmt == cur_out else tk.RAISED)
+        for fmt, lbl in self.in_pill_btns.items():
+            if fmt == cur_in:
+                lbl.configure(bg=NORD["frost_cyan"], fg=NORD["text_dark"])
+            else:
+                lbl.configure(bg=NORD["bg_elevated"], fg=NORD["fg_muted"])
+        for fmt, lbl in self.out_pill_btns.items():
+            if fmt == cur_out:
+                lbl.configure(bg=NORD["aurora_green"], fg=NORD["text_dark"])
+            else:
+                lbl.configure(bg=NORD["bg_elevated"], fg=NORD["fg_muted"])
 
     def set_in_format(self, fmt: str):
         self.in_fmt_var.set(fmt)
@@ -373,7 +510,7 @@ class PacketConverterApp:
             rendered = ConversionEngine.from_bytes(
                 data, self.out_fmt_var.get(), self.ebcdic_var.get(), self.ascii_dots.get()
             )
-            self.out_text.configure(fg="#0b3d0b")
+            self.out_text.configure(fg=NORD["aurora_green"])
             self.out_text.delete("1.0", tk.END)
             self.out_text.insert("1.0", rendered)
 
@@ -384,7 +521,7 @@ class PacketConverterApp:
                 f"Bytes: {len(data):,}  |  Entropy: {entropy:.2f}/8.00{ent_hint}  |  SHA-256: {sha_short}..."
             )
         except Exception as exc:
-            self.out_text.configure(fg="#b00020")
+            self.out_text.configure(fg=NORD["aurora_red"])
             self.out_text.delete("1.0", tk.END)
             self.out_text.insert("1.0", f"[Conversion Error]\n{exc}")
             self.status_var.set(f"Error: {exc}")
