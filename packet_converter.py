@@ -4,8 +4,7 @@ import hashlib
 import math
 import re
 import tkinter as tk
-from tkinter import filedialog, messagebox
-import customtkinter as ctk
+from tkinter import ttk, filedialog, messagebox
 
 FORMATS = ["C Array", "Hex Dump", "YAML", "ASCII", "UTF-8", "EBCDIC", "Raw"]
 
@@ -158,161 +157,164 @@ class ConversionEngine:
         raise ValueError("No Gzip magic bytes (1f 8b) detected in payload.")
 
 
-class PacketConverterApp(ctk.CTk):
-    def __init__(self):
-        super().__init__()
-
-        ctk.set_appearance_mode("dark")
-        ctk.set_default_color_theme("blue")
-
-        self.title("Wireshark Stream & Payload Converter")
-        self.geometry("1280x780")
-        self.minsize(1020, 620)
+class PacketConverterApp:
+    def __init__(self, root: tk.Tk):
+        self.root = root
+        self.root.title("Wireshark Stream & Payload Converter")
+        self.root.geometry("1240x760")
+        self.root.minsize(960, 560)
 
         self.current_bytes = b""
         self.in_fmt = "C Array"
         self.out_fmt = "ASCII"
 
+        self._setup_theme()
         self._build_ui()
         self._load_sample()
 
+        # Force macOS window render & foreground focus
+        self.root.update_idletasks()
+        self.root.lift()
+        self.root.attributes("-topmost", True)
+        self.root.after(150, lambda: self.root.attributes("-topmost", False))
+
+    def _setup_theme(self):
+        style = ttk.Style(self.root)
+        # "default" or "classic" renders reliably on both Tk 8.5 and Tk 8.6 on macOS
+        available = style.theme_names()
+        style.theme_use("clam" if "clam" in available else "default")
+
+        style.configure("TNotebook", background="#252536", borderwidth=0)
+        style.configure("TNotebook.Tab", padding=[10, 5], font=("Menlo", 11, "bold"))
+        style.map(
+            "TNotebook.Tab",
+            background=[("selected", "#89b4fa"), ("!selected", "#313244")],
+            foreground=[("selected", "#11111b"), ("!selected", "#cdd6f4")],
+        )
+
     def _build_ui(self):
-        self.grid_columnconfigure(0, weight=1)
-        self.grid_columnconfigure(1, weight=1)
-        self.grid_rowconfigure(1, weight=1)
+        self.root.configure(bg="#1e1e2e")
 
-        # --- Top Global Action Bar ---
-        top_bar = ctk.CTkFrame(self, height=48, corner_radius=10)
-        top_bar.grid(row=0, column=0, columnspan=2, sticky="ew", padx=14, pady=(12, 6))
+        # --- Top Global Toolbar ---
+        top_bar = tk.Frame(self.root, bg="#252536", padx=12, pady=8)
+        top_bar.pack(side=tk.TOP, fill=tk.X, padx=12, pady=(12, 6))
 
-        ctk.CTkLabel(
-            top_bar, text="Wireshark Stream Converter",
-            font=ctk.CTkFont(size=15, weight="bold")
-        ).pack(side="left", padx=14, pady=8)
+        tk.Label(
+            top_bar, text="Wireshark Stream & Payload Converter",
+            bg="#252536", fg="#cdd6f4", font=("Helvetica", 14, "bold")
+        ).pack(side=tk.LEFT)
 
-        # Global utilities on right side of top bar
-        ctk.CTkButton(
-            top_bar, text="Clear All", width=85, fg_color="#45475a", hover_color="#585b70",
-            command=self.clear_all
-        ).pack(side="right", padx=(6, 12), pady=8)
+        tk.Button(top_bar, text="Clear All", command=self.clear_all, padx=10).pack(side=tk.RIGHT, padx=(6, 0))
+        tk.Button(top_bar, text="Gunzip Body", command=self.decompress_gzip, padx=10).pack(side=tk.RIGHT, padx=6)
+        tk.Button(top_bar, text="Swap Panes", command=self.swap_panes, padx=10).pack(side=tk.RIGHT, padx=6)
 
-        ctk.CTkButton(
-            top_bar, text="Gunzip Body", width=105, fg_color="#313244", hover_color="#45475a",
-            command=self.decompress_gzip
-        ).pack(side="right", padx=6, pady=8)
+        self.ebcdic_var = tk.StringVar(value="cp037")
+        cp_menu = tk.OptionMenu(top_bar, self.ebcdic_var, "cp037", "cp500", "cp1047", command=lambda _: self.convert())
+        cp_menu.pack(side=tk.RIGHT, padx=(4, 12))
+        tk.Label(
+            top_bar, text="EBCDIC CP:", bg="#252536", fg="#cdd6f4", font=("Helvetica", 11)
+        ).pack(side=tk.RIGHT)
 
-        ctk.CTkButton(
-            top_bar, text="⇄ Swap Panes", width=115, command=self.swap_panes
-        ).pack(side="right", padx=6, pady=8)
+        # --- Bottom Status Bar (pack before expanding middle area) ---
+        status_bar = tk.Frame(self.root, bg="#11111b", padx=12, pady=6)
+        status_bar.pack(side=tk.BOTTOM, fill=tk.X, padx=12, pady=(4, 12))
 
-        # EBCDIC Codepage Pill
-        self.ebcdic_var = ctk.StringVar(value="cp037")
-        cp_menu = ctk.CTkOptionMenu(
-            top_bar, values=["cp037", "cp500", "cp1047"], variable=self.ebcdic_var,
-            width=90, command=lambda _: self.convert()
+        self.status_var = tk.StringVar(value="Ready")
+        tk.Label(
+            status_bar, textvariable=self.status_var, bg="#11111b", fg="#a6adc8",
+            font=("Menlo", 11)
+        ).pack(side=tk.LEFT)
+
+        # --- Center PanedWindow (Left Input / Right Output) ---
+        paned = tk.PanedWindow(self.root, orient=tk.HORIZONTAL, bg="#1e1e2e", sashwidth=8, bd=0)
+        paned.pack(side=tk.TOP, fill=tk.BOTH, expand=True, padx=12, pady=4)
+
+        # LEFT CARD (INPUT)
+        left_card = tk.Frame(paned, bg="#252536", padx=10, pady=10)
+        left_hdr = tk.Frame(left_card, bg="#252536")
+        left_hdr.pack(side=tk.TOP, fill=tk.X, pady=(0, 6))
+
+        tk.Label(
+            left_hdr, text="INPUT FORMAT", bg="#252536", fg="#89b4fa",
+            font=("Helvetica", 12, "bold")
+        ).pack(side=tk.LEFT)
+
+        tk.Button(left_hdr, text="Load File...", command=self.load_file, padx=8).pack(side=tk.RIGHT, padx=(4, 0))
+        tk.Button(left_hdr, text="Paste", command=self.paste_clipboard, padx=8).pack(side=tk.RIGHT, padx=4)
+        tk.Button(left_hdr, text="Auto-Detect", command=self.auto_detect_input, padx=8).pack(side=tk.RIGHT, padx=4)
+
+        # Native Notebook Tabs for Input Format
+        self.in_notebook = ttk.Notebook(left_card)
+        self.in_tab_frames = {}
+        for fmt in FORMATS:
+            tab = tk.Frame(self.in_notebook, bg="#252536", height=1)
+            self.in_notebook.add(tab, text=fmt)
+            self.in_tab_frames[fmt] = tab
+        self.in_notebook.pack(side=tk.TOP, fill=tk.X, pady=(0, 6))
+        self.in_notebook.bind("<<NotebookTabChanged>>", self.on_in_tab)
+
+        in_box = tk.Frame(left_card, bg="#181825")
+        in_box.pack(side=tk.TOP, fill=tk.BOTH, expand=True)
+
+        self.in_text = tk.Text(
+            in_box, wrap=tk.NONE, bg="#181825", fg="#cdd6f4",
+            insertbackground="#89b4fa", font=("Menlo", 12), relief=tk.FLAT, padx=10, pady=10, undo=True
         )
-        cp_menu.pack(side="right", padx=(4, 10), pady=8)
-        ctk.CTkLabel(top_bar, text="EBCDIC Codepage:", font=ctk.CTkFont(size=12)).pack(side="right", padx=(10, 4))
+        in_sy = tk.Scrollbar(in_box, orient=tk.VERTICAL, command=self.in_text.yview)
+        in_sx = tk.Scrollbar(in_box, orient=tk.HORIZONTAL, command=self.in_text.xview)
+        self.in_text.configure(yscrollcommand=in_sy.set, xscrollcommand=in_sx.set)
+        in_sy.pack(side=tk.RIGHT, fill=tk.Y)
+        in_sx.pack(side=tk.BOTTOM, fill=tk.X)
+        self.in_text.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        self.in_text.bind("<KeyRelease>", lambda _: self.convert())
 
-        # --- Left Panel: Input with Format Selection Tabs ---
-        left_card = ctk.CTkFrame(self, corner_radius=12)
-        left_card.grid(row=1, column=0, sticky="nsew", padx=(14, 7), pady=6)
-        left_card.grid_rowconfigure(2, weight=1)
-        left_card.grid_columnconfigure(0, weight=1)
+        # RIGHT CARD (OUTPUT)
+        right_card = tk.Frame(paned, bg="#252536", padx=10, pady=10)
+        right_hdr = tk.Frame(right_card, bg="#252536")
+        right_hdr.pack(side=tk.TOP, fill=tk.X, pady=(0, 6))
 
-        left_header = ctk.CTkFrame(left_card, fg_color="transparent")
-        left_header.grid(row=0, column=0, sticky="ew", padx=12, pady=(10, 4))
+        tk.Label(
+            right_hdr, text="OUTPUT FORMAT", bg="#252536", fg="#a6e3a1",
+            font=("Helvetica", 12, "bold")
+        ).pack(side=tk.LEFT)
 
-        ctk.CTkLabel(
-            left_header, text="INPUT FORMAT",
-            font=ctk.CTkFont(size=12, weight="bold"), text_color="#89b4fa"
-        ).pack(side="left")
+        tk.Button(right_hdr, text="Save Output...", command=self.save_output, padx=8).pack(side=tk.RIGHT, padx=(4, 0))
+        tk.Button(right_hdr, text="Copy Output", command=self.copy_output, padx=8).pack(side=tk.RIGHT, padx=4)
 
-        ctk.CTkButton(
-            left_header, text="Load File...", width=85, height=28,
-            fg_color="#313244", hover_color="#45475a", command=self.load_file
-        ).pack(side="right", padx=(4, 0))
+        self.ascii_dots = tk.BooleanVar(value=False)
+        tk.Checkbutton(
+            right_hdr, text="Dots for non-ASCII", variable=self.ascii_dots,
+            bg="#252536", fg="#cdd6f4", selectcolor="#181825", activebackground="#252536",
+            font=("Helvetica", 11), command=self.convert
+        ).pack(side=tk.RIGHT, padx=8)
 
-        ctk.CTkButton(
-            left_header, text="Paste", width=65, height=28,
-            fg_color="#313244", hover_color="#45475a", command=self.paste_clipboard
-        ).pack(side="right", padx=4)
+        # Native Notebook Tabs for Output Format
+        self.out_notebook = ttk.Notebook(right_card)
+        self.out_tab_frames = {}
+        for fmt in FORMATS:
+            tab = tk.Frame(self.out_notebook, bg="#252536", height=1)
+            self.out_notebook.add(tab, text=fmt)
+            self.out_tab_frames[fmt] = tab
+        self.out_notebook.select(self.out_tab_frames["ASCII"])
+        self.out_notebook.pack(side=tk.TOP, fill=tk.X, pady=(0, 6))
+        self.out_notebook.bind("<<NotebookTabChanged>>", self.on_out_tab)
 
-        ctk.CTkButton(
-            left_header, text="Auto-Detect", width=95, height=28,
-            command=self.auto_detect_input
-        ).pack(side="right", padx=4)
+        out_box = tk.Frame(right_card, bg="#181825")
+        out_box.pack(side=tk.TOP, fill=tk.BOTH, expand=True)
 
-        # Input Format Selection Tabs (Segmented Button)
-        self.in_tabs = ctk.CTkSegmentedButton(
-            left_card, values=FORMATS, command=self.on_input_tab_change,
-            font=ctk.CTkFont(size=12, weight="bold"), height=32
+        self.out_text = tk.Text(
+            out_box, wrap=tk.NONE, bg="#181825", fg="#a6e3a1",
+            insertbackground="#a6e3a1", font=("Menlo", 12), relief=tk.FLAT, padx=10, pady=10
         )
-        self.in_tabs.set("C Array")
-        self.in_tabs.grid(row=1, column=0, sticky="ew", padx=12, pady=(4, 8))
+        out_sy = tk.Scrollbar(out_box, orient=tk.VERTICAL, command=self.out_text.yview)
+        out_sx = tk.Scrollbar(out_box, orient=tk.HORIZONTAL, command=self.out_text.xview)
+        self.out_text.configure(yscrollcommand=out_sy.set, xscrollcommand=out_sx.set)
+        out_sy.pack(side=tk.RIGHT, fill=tk.Y)
+        out_sx.pack(side=tk.BOTTOM, fill=tk.X)
+        self.out_text.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
 
-        self.in_textbox = ctk.CTkTextbox(
-            left_card, font=ctk.CTkFont(family="Menlo", size=13),
-            wrap="none", corner_radius=8
-        )
-        self.in_textbox.grid(row=2, column=0, sticky="nsew", padx=12, pady=(0, 12))
-        self.in_textbox.bind("<KeyRelease>", lambda _: self.convert())
-
-        # --- Right Panel: Output with Format Selection Tabs ---
-        right_card = ctk.CTkFrame(self, corner_radius=12)
-        right_card.grid(row=1, column=1, sticky="nsew", padx=(7, 14), pady=6)
-        right_card.grid_rowconfigure(2, weight=1)
-        right_card.grid_columnconfigure(0, weight=1)
-
-        right_header = ctk.CTkFrame(right_card, fg_color="transparent")
-        right_header.grid(row=0, column=0, sticky="ew", padx=12, pady=(10, 4))
-
-        ctk.CTkLabel(
-            right_header, text="OUTPUT FORMAT",
-            font=ctk.CTkFont(size=12, weight="bold"), text_color="#a6e3a1"
-        ).pack(side="left")
-
-        ctk.CTkButton(
-            right_header, text="Save Output...", width=95, height=28,
-            fg_color="#313244", hover_color="#45475a", command=self.save_output
-        ).pack(side="right", padx=(4, 0))
-
-        ctk.CTkButton(
-            right_header, text="Copy Output", width=95, height=28,
-            command=self.copy_output
-        ).pack(side="right", padx=4)
-
-        self.ascii_dots_var = ctk.BooleanVar(value=False)
-        ctk.CTkCheckBox(
-            right_header, text="Dots for non-ASCII", variable=self.ascii_dots_var,
-            font=ctk.CTkFont(size=11), checkbox_width=18, checkbox_height=18,
-            command=self.convert
-        ).pack(side="right", padx=8)
-
-        # Output Format Selection Tabs (Segmented Button)
-        self.out_tabs = ctk.CTkSegmentedButton(
-            right_card, values=FORMATS, command=self.on_output_tab_change,
-            font=ctk.CTkFont(size=12, weight="bold"), height=32,
-            selected_color="#2e7d32", selected_hover_color="#388e3c"
-        )
-        self.out_tabs.set("ASCII")
-        self.out_tabs.grid(row=1, column=0, sticky="ew", padx=12, pady=(4, 8))
-
-        self.out_textbox = ctk.CTkTextbox(
-            right_card, font=ctk.CTkFont(family="Menlo", size=13),
-            wrap="none", corner_radius=8, text_color="#a6e3a1"
-        )
-        self.out_textbox.grid(row=2, column=0, sticky="nsew", padx=12, pady=(0, 12))
-
-        # --- Bottom Status & Entropy Inspector Bar ---
-        status_bar = ctk.CTkFrame(self, height=34, corner_radius=8)
-        status_bar.grid(row=2, column=0, columnspan=2, sticky="ew", padx=14, pady=(4, 12))
-
-        self.status_label = ctk.CTkLabel(
-            status_bar, text="Ready",
-            font=ctk.CTkFont(family="Menlo", size=11), text_color="#a6adc8"
-        )
-        self.status_label.pack(side="left", padx=12, pady=5)
+        paned.add(left_card, stretch="always")
+        paned.add(right_card, stretch="always")
 
     def _load_sample(self):
         sample = (
@@ -323,65 +325,64 @@ class PacketConverterApp(ctk.CTk):
             "0x74, 0x70, 0x66, 0x6f, 0x72, 0x65, 0x76, 0x65,\n"
             "0x72, 0x2e, 0x63, 0x6f, 0x6d, 0x0d, 0x0a, 0x0d, 0x0a };"
         )
-        self.in_textbox.insert("1.0", sample)
+        self.in_text.insert("1.0", sample)
         self.convert()
 
-    def on_input_tab_change(self, value: str):
-        self.in_fmt = value
+    def on_in_tab(self, _event=None):
+        idx = self.in_notebook.index(self.in_notebook.select())
+        self.in_fmt = FORMATS[idx]
         self.convert()
 
-    def on_output_tab_change(self, value: str):
-        self.out_fmt = value
+    def on_out_tab(self, _event=None):
+        idx = self.out_notebook.index(self.out_notebook.select())
+        self.out_fmt = FORMATS[idx]
         self.convert()
 
     def convert(self):
-        raw_in = self.in_textbox.get("1.0", "end-1c")
+        raw_in = self.in_text.get("1.0", "end-1c")
         if not raw_in.strip():
             self.current_bytes = b""
-            self.out_textbox.delete("1.0", "end")
-            self.status_label.configure(text="Bytes: 0  |  Entropy: 0.00  |  SHA-256: -")
+            self.out_text.delete("1.0", tk.END)
+            self.status_var.set("Bytes: 0  |  Entropy: 0.00  |  SHA-256: -")
             return
 
         try:
             data = ConversionEngine.to_bytes(raw_in, self.in_fmt, self.ebcdic_var.get())
             self.current_bytes = data
             rendered = ConversionEngine.from_bytes(
-                data, self.out_fmt, self.ebcdic_var.get(), self.ascii_dots_var.get()
+                data, self.out_fmt, self.ebcdic_var.get(), self.ascii_dots.get()
             )
-            self.out_textbox.configure(text_color="#a6e3a1")
-            self.out_textbox.delete("1.0", "end")
-            self.out_textbox.insert("1.0", rendered)
+            self.out_text.configure(fg="#a6e3a1")
+            self.out_text.delete("1.0", tk.END)
+            self.out_text.insert("1.0", rendered)
 
             entropy = ConversionEngine.shannon_entropy(data)
             ent_hint = " (Likely Encrypted/Compressed)" if entropy > 7.2 else " (Plaintext/Structured)"
             sha_short = hashlib.sha256(data).hexdigest()[:16]
-            self.status_label.configure(
-                text=f"Bytes: {len(data):,}  |  Entropy: {entropy:.2f}/8.00{ent_hint}  |  SHA-256: {sha_short}..."
+            self.status_var.set(
+                f"Bytes: {len(data):,}  |  Entropy: {entropy:.2f}/8.00{ent_hint}  |  SHA-256: {sha_short}..."
             )
         except Exception as exc:
-            self.out_textbox.configure(text_color="#f38ba8")
-            self.out_textbox.delete("1.0", "end")
-            self.out_textbox.insert("1.0", f"[Conversion Error]\n{exc}")
-            self.status_label.configure(text=f"Error: {exc}")
+            self.out_text.configure(fg="#f38ba8")
+            self.out_text.delete("1.0", tk.END)
+            self.out_text.insert("1.0", f"[Conversion Error]\n{exc}")
+            self.status_var.set(f"Error: {exc}")
 
     def auto_detect_input(self):
-        raw_in = self.in_textbox.get("1.0", "end-1c")
+        raw_in = self.in_text.get("1.0", "end-1c")
         detected = ConversionEngine.auto_detect(raw_in)
         self.in_fmt = detected
-        self.in_tabs.set(detected)
+        self.in_notebook.select(self.in_tab_frames[detected])
         self.convert()
 
     def swap_panes(self):
-        out_val = self.out_textbox.get("1.0", "end-1c")
+        out_val = self.out_text.get("1.0", "end-1c")
         old_in, old_out = self.in_fmt, self.out_fmt
-
-        self.in_fmt = old_out
-        self.out_fmt = old_in
-        self.in_tabs.set(old_out)
-        self.out_tabs.set(old_in)
-
-        self.in_textbox.delete("1.0", "end")
-        self.in_textbox.insert("1.0", out_val)
+        self.in_fmt, self.out_fmt = old_out, old_in
+        self.in_notebook.select(self.in_tab_frames[old_out])
+        self.out_notebook.select(self.out_tab_frames[old_in])
+        self.in_text.delete("1.0", tk.END)
+        self.in_text.insert("1.0", out_val)
         self.convert()
 
     def decompress_gzip(self):
@@ -391,28 +392,28 @@ class PacketConverterApp(ctk.CTk):
             unzipped = ConversionEngine.try_gunzip(self.current_bytes)
             self.current_bytes = unzipped
             rendered = ConversionEngine.from_bytes(
-                unzipped, self.out_fmt, self.ebcdic_var.get(), self.ascii_dots_var.get()
+                unzipped, self.out_fmt, self.ebcdic_var.get(), self.ascii_dots.get()
             )
-            self.out_textbox.delete("1.0", "end")
-            self.out_textbox.insert("1.0", rendered)
-            self.status_label.configure(text=f"Gunzipped successfully -> {len(unzipped):,} bytes")
+            self.out_text.delete("1.0", tk.END)
+            self.out_text.insert("1.0", rendered)
+            self.status_var.set(f"Gunzipped successfully -> {len(unzipped):,} bytes")
         except Exception as exc:
             messagebox.showinfo("Gunzip", str(exc))
 
     def paste_clipboard(self):
         try:
-            clip = self.clipboard_get()
-            self.in_textbox.delete("1.0", "end")
-            self.in_textbox.insert("1.0", clip)
+            clip = self.root.clipboard_get()
+            self.in_text.delete("1.0", tk.END)
+            self.in_text.insert("1.0", clip)
             self.auto_detect_input()
         except tk.TclError:
             messagebox.showwarning("Clipboard", "Clipboard is empty or contains non-text data.")
 
     def copy_output(self):
-        out_val = self.out_textbox.get("1.0", "end-1c")
-        self.clipboard_clear()
-        self.clipboard_append(out_val)
-        self.status_label.configure(text="Copied output to clipboard.")
+        out_val = self.out_text.get("1.0", "end-1c")
+        self.root.clipboard_clear()
+        self.root.clipboard_append(out_val)
+        self.status_var.set("Copied output to clipboard.")
 
     def load_file(self):
         path = filedialog.askopenfilename(title="Open Stream or Binary File")
@@ -422,14 +423,14 @@ class PacketConverterApp(ctk.CTk):
             raw_bytes = f.read()
         try:
             text_val = raw_bytes.decode("utf-8")
-            self.in_textbox.delete("1.0", "end")
-            self.in_textbox.insert("1.0", text_val)
+            self.in_text.delete("1.0", "end")
+            self.in_text.insert("1.0", text_val)
             self.auto_detect_input()
         except UnicodeDecodeError:
             self.in_fmt = "Raw"
-            self.in_tabs.set("Raw")
-            self.in_textbox.delete("1.0", "end")
-            self.in_textbox.insert("1.0", raw_bytes.decode("latin-1"))
+            self.in_notebook.select(self.in_tab_frames["Raw"])
+            self.in_text.delete("1.0", "end")
+            self.in_text.insert("1.0", raw_bytes.decode("latin-1"))
             self.convert()
 
     def save_output(self):
@@ -438,21 +439,22 @@ class PacketConverterApp(ctk.CTk):
             if path:
                 with open(path, "wb") as f:
                     f.write(self.current_bytes)
-                self.status_label.configure(text=f"Saved {len(self.current_bytes):,} raw bytes to {path}")
+                self.status_var.set(f"Saved {len(self.current_bytes):,} raw bytes to {path}")
         else:
             path = filedialog.asksaveasfilename(title="Save Converted Output", defaultextension=".txt")
             if path:
                 with open(path, "w", encoding="utf-8") as f:
-                    f.write(self.out_textbox.get("1.0", "end-1c"))
-                self.status_label.configure(text=f"Saved text output to {path}")
+                    f.write(self.out_text.get("1.0", "end-1c"))
+                self.status_var.set(f"Saved text output to {path}")
 
     def clear_all(self):
-        self.in_textbox.delete("1.0", "end")
-        self.out_textbox.delete("1.0", "end")
+        self.in_text.delete("1.0", tk.END)
+        self.out_text.delete("1.0", tk.END)
         self.current_bytes = b""
-        self.status_label.configure(text="Cleared.")
+        self.status_var.set("Cleared.")
 
 
 if __name__ == "__main__":
-    app = PacketConverterApp()
-    app.mainloop()
+    root = tk.Tk()
+    app = PacketConverterApp(root)
+    root.mainloop()
