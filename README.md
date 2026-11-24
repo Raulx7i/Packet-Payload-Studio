@@ -56,7 +56,7 @@ sudo apt update && sudo apt install python3-tk
 
 2. **Launch the application:**
    ```bash
-   python3 packet_converter.py
+   python3 main.py
    ```
 
 ## License
