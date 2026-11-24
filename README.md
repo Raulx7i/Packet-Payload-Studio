@@ -11,7 +11,11 @@ A lightweight, CyberChef-inspired Python desktop GUI built with the Python stand
 - **Dual Format Controls:** Switch formats instantly using either the dropdown menus or equal-width quick-select format tabs above both editors.
 - **Auto-Detect Input:** Automatically identifies C Arrays, offset-prefixed Hex Dumps, YAML stream exports, or plain text upon pasting or loading a file.
 - **Live Payload Inspector:** Real-time byte counter, SHA-256 digest preview, and **Shannon Entropy** score (`0.00`–`8.00`) to distinguish structured plaintext from encrypted or compressed traffic.
-- **Built-in HTTP Gunzip:** Detects Gzip magic bytes (`1f 8b`) in raw payloads or HTTP response bodies and decompresses them in one click.
+- **Built-in HTTP Gunzip & Zlib:** Detects Gzip (`1f 8b`) or Zlib headers in raw payloads or HTTP response bodies and decompresses them in one click.
+- **CyberChef-Style Data Transforms:** Apply Base64 encode/decode, URL encode/decode, and custom hex or ASCII key XOR operations directly on decoded payloads.
+- **Client/Server Stream Splitter (`peer0` / `peer1`):** Isolate client requests (`peer0`) or server responses (`peer1`) from multi-packet Wireshark C Array exports.
+- **Pure-Python `.pcap` Payload Extractor:** Load standard `.pcap` packet captures directly to reassemble IPv4 TCP/UDP application payloads without third-party dependencies.
+- **Live Output Search (`Cmd+F` / `Ctrl+F`):** Search converted output case-insensitively and highlight all matching strings or hex sequences in real time.
 
 ## Project Structure
 
