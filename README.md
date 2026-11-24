@@ -1,27 +1,28 @@
-# Stream Converter
+# Packet Payload Studio
 
-A lightweight Python desktop GUI (built with standard library `tkinter`) for converting and inspecting Wireshark packet streams across **C Array**, **Hex Dump**, **YAML**, **ASCII**, **UTF-8**, **EBCDIC**, and **Raw** binary formats.
+A lightweight, CyberChef-inspired Python desktop GUI built with the Python standard library (`tkinter`) for converting and inspecting Wireshark packet streams across **C Array**, **Hex Dump**, **YAML**, **ASCII**, **UTF-8**, **EBCDIC**, and **Raw** binary formats.
+
+![Packet Payload Studio Interface](assets/preview.png)
 
 ## Features
 
-- **7-Format Hub-and-Spoke Engine:** Convert seamlessly between **C Array**, **Hex Dump**, **YAML**, **ASCII**, **UTF-8**, **EBCDIC** (`cp037`, `cp500`, `cp1047`), and **Raw** bytes.
-- **Clickable Format Tabs:** Dedicated input and output format tab bars for instant one-click switching.
-- **Auto-Detect Input:** Automatically detects C Arrays, offset-prefixed Hex Dumps, YAML stream exports, or plain text upon pasting.
-- **Live Payload Inspector:** Real-time byte length, SHA-256 digest, and **Shannon Entropy** calculation (0.00–8.00) to distinguish plaintext from encrypted or compressed payloads.
-- **Built-in HTTP Gunzip:** Detects Gzip magic bytes (`1f 8b`) and decompresses HTTP payloads in one click.
+- **7-Format Hub-and-Spoke Engine:** Seamlessly decode and re-encode streams across **C Array**, **Hex Dump**, **YAML**, **ASCII**, **UTF-8**, **EBCDIC** (`cp037`, `cp500`, `cp1047`), and **Raw** bytes.
+- **Nord Frost Frosted-Glass UI:** Equal-split two-pane layout styled with the low-glare **Nord Frost** dark slate palette and a real-time **Glass** opacity slider (`75%`–`100%`).
+- **Dual Format Controls:** Switch formats instantly using either the dropdown menus or equal-width quick-select format tabs above both editors.
+- **Auto-Detect Input:** Automatically identifies C Arrays, offset-prefixed Hex Dumps, YAML stream exports, or plain text upon pasting or loading a file.
+- **Live Payload Inspector:** Real-time byte counter, SHA-256 digest preview, and **Shannon Entropy** score (`0.00`–`8.00`) to distinguish structured plaintext from encrypted or compressed traffic.
+- **Built-in HTTP Gunzip:** Detects Gzip magic bytes (`1f 8b`) in raw payloads or HTTP response bodies and decompresses them in one click.
 
-## Requirements
+## Requirements & Dependencies
 
-- **Python 3.8+** (uses Python standard library modules only; no third-party `pip` packages required)
+- **Python 3.8+** (zero third-party `pip` packages required)
+- **Tcl/Tk 8.6+** (`tkinter`)
 
-## Usage
+### macOS Setup (Important)
+
+Apple's pre-installed system Python uses an outdated Tcl/Tk 8.5 framework that causes rendering and text-visibility bugs. Install Homebrew's modern `python-tk` package and ensure Homebrew is prioritized in your `PATH`:
 
 ```bash
-python3 packet_converter.py
-```
-
-*(On macOS, run `TK_SILENCE_DEPRECATION=1 python3 packet_converter.py` to suppress the system Tcl/Tk notice.)*
-
-## License
-
-Licensed under the MIT License — see [LICENSE](LICENSE).
+brew install python-tk
+echo 'export PATH="/opt/homebrew/bin:$PATH"' >> ~/.zshrc
+source ~/.zshrc
