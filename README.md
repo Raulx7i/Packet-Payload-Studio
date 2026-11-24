@@ -26,3 +26,37 @@ Apple's pre-installed system Python uses an outdated Tcl/Tk 8.5 framework that c
 brew install python-tk
 echo 'export PATH="/opt/homebrew/bin:$PATH"' >> ~/.zshrc
 source ~/.zshrc
+Verify your active Python uses Tcl/Tk 8.6 or newer:
+
+```bash
+python3 -c "import tkinter; print(tkinter.TkVersion)"
+```
+
+### Linux (Debian / Ubuntu)
+
+If `tkinter` is not bundled with your Python installation:
+
+```bash
+sudo apt update && sudo apt install python3-tk
+```
+
+### Windows
+
+`tkinter` is included automatically with the official Python installer from [python.org](https://www.python.org/downloads/).
+
+## Installation & Usage
+
+1. **Clone the repository:**
+   ```bash
+   git clone [https://github.com/Raulx7i/Packet-Payload-Studio.git](https://github.com/Raulx7i/Packet-Payload-Studio.git)
+   cd Packet-Payload-Studio
+   ```
+
+2. **Launch the application:**
+   ```bash
+   python3 packet_converter.py
+   ```
+
+## License
+
+Licensed under the MIT License — see [LICENSE](LICENSE).
