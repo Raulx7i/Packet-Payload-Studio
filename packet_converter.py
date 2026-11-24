@@ -484,14 +484,18 @@ class PacketConverterApp:
         self.convert()
 
     def _load_sample(self):
-        sample = (
-            "char peer0_0[] = { /* Packet 6 */\n"
-            "0x47, 0x45, 0x54, 0x20, 0x2f, 0x20, 0x48, 0x54,\n"
-            "0x54, 0x50, 0x2f, 0x31, 0x2e, 0x31, 0x0d, 0x0a,\n"
-            "0x48, 0x6f, 0x73, 0x74, 0x3a, 0x20, 0x68, 0x74,\n"
-            "0x74, 0x70, 0x66, 0x6f, 0x72, 0x65, 0x76, 0x65,\n"
-            "0x72, 0x2e, 0x63, 0x6f, 0x6d, 0x0d, 0x0a, 0x0d, 0x0a };"
-        )
+        welcome_bytes = b"Welcome to Packet Payload Studio"
+        lines = ["char welcome_msg[] = {"]
+        for i in range(0, len(welcome_bytes), 8):
+            chunk = ", ".join(f"0x{b:02x}" for b in welcome_bytes[i:i + 8])
+            comma = "," if i + 8 < len(welcome_bytes) else ""
+            lines.append(f"    {chunk}{comma}")
+        lines.append("};")
+        sample = "\n".join(lines)
+
+        self.in_fmt_var.set("C Array")
+        self.out_fmt_var.set("ASCII")
+        self._highlight_active_pills()
         self.in_text.delete("1.0", tk.END)
         self.in_text.insert("1.0", sample)
         self.convert()
