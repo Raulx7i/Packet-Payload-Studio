@@ -13,6 +13,22 @@ A lightweight, CyberChef-inspired Python desktop GUI built with the Python stand
 - **Live Payload Inspector:** Real-time byte counter, SHA-256 digest preview, and **Shannon Entropy** score (`0.00`–`8.00`) to distinguish structured plaintext from encrypted or compressed traffic.
 - **Built-in HTTP Gunzip:** Detects Gzip magic bytes (`1f 8b`) in raw payloads or HTTP response bodies and decompresses them in one click.
 
+## Project Structure
+
+```text
+Packet-Payload-Studio/
+├── main.py                  # Root entrypoint (run: python3 main.py)
+├── code/
+│   ├── __init__.py
+│   ├── theme.py             # Nord Frost palette & typography constants
+│   ├── engine.py            # 7-format hub-and-spoke engine, peer0/peer1 splitter, PCAP parser, XOR/Base64/URL/Gunzip transforms
+│   └── app.py               # Modular Tkinter frosted-glass GUI with search, stream filter, and transform bar
+├── assets/
+│   └── preview.png
+├── README.md
+└── LICENSE
+```
+
 ## Requirements & Dependencies
 
 - **Python 3.8+** (zero third-party `pip` packages required)
