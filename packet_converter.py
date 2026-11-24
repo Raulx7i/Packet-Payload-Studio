@@ -164,17 +164,6 @@ class PacketConverterApp:
         self.root.geometry("1260x780")
         self.root.minsize(980, 600)
 
-        # Clean, high-contrast palette safe across all macOS Tk versions
-        self.bg_root = "#1e222a"
-        self.bg_card = "#282c34"
-        self.bg_editor = "#161920"
-        self.fg_primary = "#e5e9f0"
-        self.fg_output = "#98c379"
-        self.fg_error = "#e06c75"
-        self.accent_blue = "#61afef"
-        self.accent_green = "#98c379"
-
-        self.root.configure(bg=self.bg_root)
         self.current_bytes = b""
 
         self.in_fmt_var = tk.StringVar(value="C Array")
@@ -186,49 +175,40 @@ class PacketConverterApp:
         self._build_ui()
         self._load_sample()
 
-        self.root.update_idletasks()
-        self.root.lift()
-
     def _build_ui(self):
-        # Configure root grid: Row 0 = Top Bar, Row 1 = Split Editors, Row 2 = Status Bar
         self.root.grid_rowconfigure(1, weight=1)
         self.root.grid_columnconfigure(0, weight=1, uniform="col")
         self.root.grid_columnconfigure(1, weight=1, uniform="col")
 
         # ================= TOP GLOBAL BAR =================
-        top_bar = tk.Frame(self.root, bg=self.bg_card, padx=14, pady=10)
-        top_bar.grid(row=0, column=0, columnspan=2, sticky="ew", padx=12, pady=(12, 6))
+        top_bar = tk.Frame(self.root, padx=12, pady=8, relief=tk.GROOVE, bd=1)
+        top_bar.grid(row=0, column=0, columnspan=2, sticky="ew", padx=12, pady=(10, 6))
 
         tk.Label(
             top_bar, text="Wireshark Stream & Payload Converter",
-            bg=self.bg_card, fg=self.fg_primary, font=("Helvetica", 15, "bold")
+            font=("Helvetica", 15, "bold")
         ).pack(side=tk.LEFT)
 
-        tk.Button(top_bar, text="Clear All", command=self.clear_all, padx=10, pady=3).pack(side=tk.RIGHT, padx=(6, 0))
-        tk.Button(top_bar, text="Gunzip Body", command=self.decompress_gzip, padx=10, pady=3).pack(side=tk.RIGHT, padx=6)
-        tk.Button(top_bar, text="Swap Panes", command=self.swap_panes, padx=10, pady=3).pack(side=tk.RIGHT, padx=6)
+        tk.Button(top_bar, text="Clear All", command=self.clear_all, padx=10).pack(side=tk.RIGHT, padx=(6, 0))
+        tk.Button(top_bar, text="Gunzip Body", command=self.decompress_gzip, padx=10).pack(side=tk.RIGHT, padx=6)
+        tk.Button(top_bar, text="Swap Panes", command=self.swap_panes, padx=10).pack(side=tk.RIGHT, padx=6)
 
         cp_menu = tk.OptionMenu(top_bar, self.ebcdic_var, "cp037", "cp500", "cp1047", command=lambda _: self.convert())
         cp_menu.config(width=7)
         cp_menu.pack(side=tk.RIGHT, padx=(4, 14))
-        tk.Label(
-            top_bar, text="EBCDIC Codepage:", bg=self.bg_card, fg="#abb2bf", font=("Helvetica", 11)
-        ).pack(side=tk.RIGHT)
+        tk.Label(top_bar, text="EBCDIC Codepage:", font=("Helvetica", 11)).pack(side=tk.RIGHT)
 
         # ================= LEFT PANEL (INPUT) =================
-        left_card = tk.Frame(self.root, bg=self.bg_card, padx=12, pady=10)
+        left_card = tk.LabelFrame(self.root, text=" INPUT STREAM ", font=("Helvetica", 12, "bold"), padx=10, pady=8)
         left_card.grid(row=1, column=0, sticky="nsew", padx=(12, 6), pady=4)
         left_card.grid_rowconfigure(2, weight=1)
         left_card.grid_columnconfigure(0, weight=1)
 
-        # Row 0: Input Header + Format Selection Menu
-        left_top = tk.Frame(left_card, bg=self.bg_card)
-        left_top.grid(row=0, column=0, sticky="ew", pady=(0, 8))
+        # Row 0: Input Format Dropdown + File/Clipboard Actions
+        left_top = tk.Frame(left_card)
+        left_top.grid(row=0, column=0, sticky="ew", pady=(0, 6))
 
-        tk.Label(
-            left_top, text="INPUT FORMAT:", bg=self.bg_card, fg=self.accent_blue,
-            font=("Helvetica", 12, "bold")
-        ).pack(side=tk.LEFT, padx=(0, 8))
+        tk.Label(left_top, text="Format:", font=("Helvetica", 12, "bold")).pack(side=tk.LEFT, padx=(0, 6))
 
         in_menu = tk.OptionMenu(left_top, self.in_fmt_var, *FORMATS, command=lambda _: self.on_format_change())
         in_menu.config(width=11, font=("Helvetica", 12, "bold"))
@@ -239,7 +219,7 @@ class PacketConverterApp:
         tk.Button(left_top, text="Auto-Detect", command=self.auto_detect_input, padx=8).pack(side=tk.RIGHT, padx=4)
 
         # Row 1: Quick-Select Format Buttons
-        in_pills = tk.Frame(left_card, bg=self.bg_card)
+        in_pills = tk.Frame(left_card)
         in_pills.grid(row=1, column=0, sticky="ew", pady=(0, 8))
         self.in_pill_btns = {}
         for fmt in FORMATS:
@@ -250,8 +230,8 @@ class PacketConverterApp:
             btn.pack(side=tk.LEFT, padx=(0, 4))
             self.in_pill_btns[fmt] = btn
 
-        # Row 2: Input Text Editor (Explicitly configured with high-contrast colors)
-        in_editor_wrap = tk.Frame(left_card, bg=self.bg_editor, bd=1, relief=tk.SUNKEN)
+        # Row 2: Input Text Editor (Native high-contrast white editor with black text)
+        in_editor_wrap = tk.Frame(left_card, bd=1, relief=tk.SUNKEN)
         in_editor_wrap.grid(row=2, column=0, sticky="nsew")
         in_editor_wrap.grid_rowconfigure(0, weight=1)
         in_editor_wrap.grid_columnconfigure(0, weight=1)
@@ -259,17 +239,13 @@ class PacketConverterApp:
         self.in_text = tk.Text(
             in_editor_wrap,
             wrap=tk.NONE,
-            bg=self.bg_editor,
-            fg=self.fg_primary,
-            insertbackground=self.accent_blue,
-            selectbackground="#3e4451",
-            selectforeground="#ffffff",
+            bg="#ffffff",
+            fg="#111111",
+            insertbackground="#000000",
             font=("Menlo", 13),
             padx=10,
             pady=10,
-            undo=True,
-            highlightthickness=0,
-            bd=0
+            undo=True
         )
         in_sy = tk.Scrollbar(in_editor_wrap, orient=tk.VERTICAL, command=self.in_text.yview)
         in_sx = tk.Scrollbar(in_editor_wrap, orient=tk.HORIZONTAL, command=self.in_text.xview)
@@ -281,19 +257,16 @@ class PacketConverterApp:
         self.in_text.bind("<KeyRelease>", lambda _: self.convert())
 
         # ================= RIGHT PANEL (OUTPUT) =================
-        right_card = tk.Frame(self.root, bg=self.bg_card, padx=12, pady=10)
+        right_card = tk.LabelFrame(self.root, text=" CONVERTED OUTPUT ", font=("Helvetica", 12, "bold"), padx=10, pady=8)
         right_card.grid(row=1, column=1, sticky="nsew", padx=(6, 12), pady=4)
         right_card.grid_rowconfigure(2, weight=1)
         right_card.grid_columnconfigure(0, weight=1)
 
-        # Row 0: Output Header + Format Selection Menu
-        right_top = tk.Frame(right_card, bg=self.bg_card)
-        right_top.grid(row=0, column=0, sticky="ew", pady=(0, 8))
+        # Row 0: Output Format Dropdown + Copy/Save Actions
+        right_top = tk.Frame(right_card)
+        right_top.grid(row=0, column=0, sticky="ew", pady=(0, 6))
 
-        tk.Label(
-            right_top, text="OUTPUT FORMAT:", bg=self.bg_card, fg=self.accent_green,
-            font=("Helvetica", 12, "bold")
-        ).pack(side=tk.LEFT, padx=(0, 8))
+        tk.Label(right_top, text="Format:", font=("Helvetica", 12, "bold")).pack(side=tk.LEFT, padx=(0, 6))
 
         out_menu = tk.OptionMenu(right_top, self.out_fmt_var, *FORMATS, command=lambda _: self.on_format_change())
         out_menu.config(width=11, font=("Helvetica", 12, "bold"))
@@ -304,13 +277,11 @@ class PacketConverterApp:
 
         tk.Checkbutton(
             right_top, text="Dots for non-ASCII", variable=self.ascii_dots,
-            bg=self.bg_card, fg=self.fg_primary, selectcolor=self.bg_editor,
-            activebackground=self.bg_card, activeforeground=self.fg_primary,
             font=("Helvetica", 11), command=self.convert
         ).pack(side=tk.RIGHT, padx=8)
 
         # Row 1: Quick-Select Output Format Buttons
-        out_pills = tk.Frame(right_card, bg=self.bg_card)
+        out_pills = tk.Frame(right_card)
         out_pills.grid(row=1, column=0, sticky="ew", pady=(0, 8))
         self.out_pill_btns = {}
         for fmt in FORMATS:
@@ -322,7 +293,7 @@ class PacketConverterApp:
             self.out_pill_btns[fmt] = btn
 
         # Row 2: Output Text Editor
-        out_editor_wrap = tk.Frame(right_card, bg=self.bg_editor, bd=1, relief=tk.SUNKEN)
+        out_editor_wrap = tk.Frame(right_card, bd=1, relief=tk.SUNKEN)
         out_editor_wrap.grid(row=2, column=0, sticky="nsew")
         out_editor_wrap.grid_rowconfigure(0, weight=1)
         out_editor_wrap.grid_columnconfigure(0, weight=1)
@@ -330,16 +301,12 @@ class PacketConverterApp:
         self.out_text = tk.Text(
             out_editor_wrap,
             wrap=tk.NONE,
-            bg=self.bg_editor,
-            fg=self.fg_output,
-            insertbackground=self.accent_green,
-            selectbackground="#3e4451",
-            selectforeground="#ffffff",
+            bg="#f8f9fa",
+            fg="#0b3d0b",
+            insertbackground="#000000",
             font=("Menlo", 13),
             padx=10,
-            pady=10,
-            highlightthickness=0,
-            bd=0
+            pady=10
         )
         out_sy = tk.Scrollbar(out_editor_wrap, orient=tk.VERTICAL, command=self.out_text.yview)
         out_sx = tk.Scrollbar(out_editor_wrap, orient=tk.HORIZONTAL, command=self.out_text.xview)
@@ -350,12 +317,11 @@ class PacketConverterApp:
         out_sx.grid(row=1, column=0, sticky="ew")
 
         # ================= BOTTOM STATUS BAR =================
-        status_bar = tk.Frame(self.root, bg="#12141a", padx=14, pady=8)
-        status_bar.grid(row=2, column=0, columnspan=2, sticky="ew", padx=12, pady=(4, 12))
+        status_bar = tk.Frame(self.root, padx=12, pady=6, relief=tk.GROOVE, bd=1)
+        status_bar.grid(row=2, column=0, columnspan=2, sticky="ew", padx=12, pady=(4, 10))
 
         tk.Label(
-            status_bar, textvariable=self.status_var, bg="#12141a", fg="#abb2bf",
-            font=("Menlo", 11)
+            status_bar, textvariable=self.status_var, font=("Menlo", 11)
         ).pack(side=tk.LEFT)
 
         self._highlight_active_pills()
@@ -407,7 +373,7 @@ class PacketConverterApp:
             rendered = ConversionEngine.from_bytes(
                 data, self.out_fmt_var.get(), self.ebcdic_var.get(), self.ascii_dots.get()
             )
-            self.out_text.configure(fg=self.fg_output)
+            self.out_text.configure(fg="#0b3d0b")
             self.out_text.delete("1.0", tk.END)
             self.out_text.insert("1.0", rendered)
 
@@ -418,7 +384,7 @@ class PacketConverterApp:
                 f"Bytes: {len(data):,}  |  Entropy: {entropy:.2f}/8.00{ent_hint}  |  SHA-256: {sha_short}..."
             )
         except Exception as exc:
-            self.out_text.configure(fg=self.fg_error)
+            self.out_text.configure(fg="#b00020")
             self.out_text.delete("1.0", tk.END)
             self.out_text.insert("1.0", f"[Conversion Error]\n{exc}")
             self.status_var.set(f"Error: {exc}")
