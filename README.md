@@ -26,6 +26,8 @@ Apple's pre-installed system Python uses an outdated Tcl/Tk 8.5 framework that c
 brew install python-tk
 echo 'export PATH="/opt/homebrew/bin:$PATH"' >> ~/.zshrc
 source ~/.zshrc
+```
+
 Verify your active Python uses Tcl/Tk 8.6 or newer:
 
 ```bash
