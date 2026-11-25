@@ -28,14 +28,19 @@ def detect_compression(data: bytes) -> tuple[str, float]:
         return ("BZIP2", 0.98)
     if len(data) >= 6 and data[:6] == b"\xfd7zXZ\x00":
         return ("XZ", 0.99)
-    # Valid zlib CMF (0x78) + FLG mod 31 == 0, guarded against plain ASCII like "x " (0x78 0x20)
+    # Valid zlib CMF + FLG mod 31 == 0, FDICT clear, verified via trial decompression
     if (
         len(data) >= 6
         and data[0] in (0x08, 0x18, 0x28, 0x38, 0x48, 0x58, 0x68, 0x78)
         and ((data[0] << 8) + data[1]) % 31 == 0
-        and (data[1] not in (0x20, 0x3F, 0x5E, 0x7D) or _quick_entropy(data[:128]) > 4.6)
+        and not (data[1] & 0x20)
     ):
-        return ("ZLIB", 0.90)
+        try:
+            dobj = zlib.decompressobj()
+            dobj.decompress(data[:128], 1024)
+            return ("ZLIB", 0.92)
+        except zlib.error:
+            pass
     if len(data) >= 4 and data[:4] == b"\x28\xb5\x2f\xfd":
         return ("ZSTD (external lib required)", 0.99)
     return ("None detected", 0.0)
@@ -97,7 +102,6 @@ def _bounded_zlib(payload: bytes, wbits: int, max_bytes: int = MAX_DECOMPRESS_BY
             pass
 
         out.extend(member_out)
-        # Continue if multi-member GZIP stream has trailing members
         if wbits == 16 + zlib.MAX_WBITS and dobj.eof and len(dobj.unused_data) >= 3 and dobj.unused_data[:2] == b"\x1f\x8b":
             remaining_payload = memoryview(dobj.unused_data)
         else:
@@ -107,16 +111,27 @@ def _bounded_zlib(payload: bytes, wbits: int, max_bytes: int = MAX_DECOMPRESS_BY
 
 
 def http_extract_body(data: bytes, max_bytes: int = MAX_DECOMPRESS_BYTES) -> bytes:
-    """Strip HTTP/1.x headers, decode Transfer-Encoding: chunked, and decompress gzip/deflate body."""
+    """Strip HTTP/1.x headers, respect Content-Length / chunked framing, and decompress gzip/deflate."""
     sep = data.find(b"\r\n\r\n")
     if sep == -1:
         raise ValueError("No HTTP header/body separator (\\r\\n\\r\\n) found.")
     headers, body = data[:sep], data[sep + 4:]
     if re.search(rb"(?i)^transfer-encoding:\s*chunked\b", headers, re.M):
         body = decode_http_chunked(body)
-    if body.startswith(b"\x1f\x8b") or re.search(rb"(?i)^content-encoding:\s*gzip\b", headers, re.M):
+    else:
+        cl_match = re.search(rb"(?i)^content-length:\s*(\d+)\b", headers, re.M)
+        if cl_match:
+            body = body[:int(cl_match.group(1))]
+
+    ce_match = re.search(rb"(?i)^content-encoding:\s*([^\r\n]+)", headers, re.M)
+    encoding = ce_match.group(1).strip().lower() if ce_match else b""
+    if b"br" in encoding:
+        raise ValueError("HTTP body uses Brotli (Content-Encoding: br), which requires an external library.")
+    if b"zstd" in encoding:
+        raise ValueError("HTTP body uses Zstandard (Content-Encoding: zstd), which requires an external library.")
+    if body.startswith(b"\x1f\x8b") or b"gzip" in encoding:
         return _bounded_zlib(body, 16 + zlib.MAX_WBITS, max_bytes)
-    if re.search(rb"(?i)^content-encoding:\s*deflate\b", headers, re.M):
+    if b"deflate" in encoding:
         try:
             return _bounded_zlib(body, zlib.MAX_WBITS, max_bytes)
         except ValueError:
@@ -152,12 +167,25 @@ def deflate_decompress(data: bytes, max_bytes: int = MAX_DECOMPRESS_BYTES) -> by
 
 
 def bz2_decompress(data: bytes, max_bytes: int = MAX_DECOMPRESS_BYTES) -> bytes:
-    dec = bz2.BZ2Decompressor()
     out = bytearray()
-    for i in range(0, len(data), 16384):
-        out.extend(dec.decompress(data[i:i + 16384], max_length=max_bytes - len(out)))
-        if len(out) >= max_bytes and not dec.eof:
-            raise ValueError(f"BZIP2 decompression aborted: exceeded {max_bytes // (1024 * 1024)} MB safety limit.")
+    remaining = memoryview(data)
+    while len(remaining) > 0:
+        dec = bz2.BZ2Decompressor()
+        for i in range(0, len(remaining), 16384):
+            rem = max_bytes - len(out)
+            if rem <= 0:
+                raise ValueError(f"BZIP2 decompression aborted: exceeded {max_bytes // (1024 * 1024)} MB safety limit.")
+            out.extend(dec.decompress(remaining[i:i + 16384], max_length=rem))
+            if len(out) >= max_bytes and not dec.eof:
+                raise ValueError(f"BZIP2 decompression aborted: exceeded {max_bytes // (1024 * 1024)} MB safety limit.")
+            if dec.eof:
+                break
+        if not dec.eof:
+            raise ValueError("Truncated or incomplete BZIP2 stream (missing end-of-stream marker).")
+        if dec.unused_data and dec.unused_data.startswith(b"BZh"):
+            remaining = memoryview(dec.unused_data)
+        else:
+            break
     return bytes(out)
 
 
@@ -166,12 +194,25 @@ def bz2_compress(data: bytes) -> bytes:
 
 
 def lzma_decompress(data: bytes, max_bytes: int = MAX_DECOMPRESS_BYTES) -> bytes:
-    dec = lzma.LZMADecompressor()
     out = bytearray()
-    for i in range(0, len(data), 16384):
-        out.extend(dec.decompress(data[i:i + 16384], max_length=max_bytes - len(out)))
-        if len(out) >= max_bytes and not dec.eof:
-            raise ValueError(f"LZMA/XZ decompression aborted: exceeded {max_bytes // (1024 * 1024)} MB safety limit.")
+    remaining = memoryview(data)
+    while len(remaining) > 0:
+        dec = lzma.LZMADecompressor()
+        for i in range(0, len(remaining), 16384):
+            rem = max_bytes - len(out)
+            if rem <= 0:
+                raise ValueError(f"LZMA/XZ decompression aborted: exceeded {max_bytes // (1024 * 1024)} MB safety limit.")
+            out.extend(dec.decompress(remaining[i:i + 16384], max_length=rem))
+            if len(out) >= max_bytes and not dec.eof:
+                raise ValueError(f"LZMA/XZ decompression aborted: exceeded {max_bytes // (1024 * 1024)} MB safety limit.")
+            if dec.eof:
+                break
+        if not dec.eof:
+            raise ValueError("Truncated or incomplete LZMA/XZ stream.")
+        if dec.unused_data and dec.unused_data.startswith(b"\xfd7zXZ\x00"):
+            remaining = memoryview(dec.unused_data)
+        else:
+            break
     return bytes(out)
 
 

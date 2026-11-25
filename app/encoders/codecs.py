@@ -125,12 +125,15 @@ def html_decode(data: bytes) -> bytes:
 
 def unicode_unescape(data: bytes) -> bytes:
     text = data.decode("utf-8")
-    # Decode \uXXXX, \UXXXXXXXX, and \xXX sequences safely even when non-ASCII CJK characters are present
     def _repl(match: re.Match) -> str:
         return codecs.decode(match.group(0), "unicode_escape")
 
-    unescaped = re.sub(r"\\(?:u[0-9a-fA-F]{4}|U[0-9a-fA-F]{8}|x[0-9a-fA-F]{2}|[nrtbfav\\'\"])", _repl, text)
-    return unescaped.encode("utf-8")
+    unescaped = re.sub(
+        r"\\(?:u[dD][89aAbB][0-9a-fA-F]{2}\\u[dD][c-fC-F][0-9a-fA-F]{2}|u[0-9a-fA-F]{4}|U[0-9a-fA-F]{8}|x[0-9a-fA-F]{2}|[nrtbfav\\'\"])",
+        _repl,
+        text,
+    )
+    return unescaped.encode("utf-8", errors="surrogatepass").decode("utf-8", errors="replace").encode("utf-8")
 
 
 def qp_encode(data: bytes) -> bytes:

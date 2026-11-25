@@ -4,6 +4,7 @@ import copy
 import hashlib
 import json
 import os
+import sys
 import tkinter as tk
 from tkinter import filedialog, messagebox
 
@@ -24,7 +25,12 @@ from app.ui.theme import (
 
 PREFS_PATH = os.path.expanduser("~/.packet_payload_studio.json")
 PARAM_OPS = {"XOR (Param = Key)", "Hash & Checksum Report (Param = HMAC Key)"}
-MAX_DISPLAY_BYTES = 1024 * 1024  # 1 MB UI preview cap; full bytes preserved for Save
+MAX_DISPLAY_BYTES = 1024 * 1024  # 1 MB UI preview cap; full canonical bytes preserved in memory
+
+
+def _safe_widget_text(text: str) -> str:
+    """Replace NUL bytes with U+2400 (SYMBOL FOR NULL) so Tk Text never truncates at 0x00."""
+    return text.replace("\x00", "\u2400")
 
 
 class PacketWorkbenchApp:
@@ -52,6 +58,7 @@ class PacketWorkbenchApp:
         self.flows: dict[str, FlowStream] = {}
         self.raw_input_bytes = b""
         self.output_bytes = b""
+        self._canonical_input_locked = False  # True when input came from file/PCAP/Swap rather than manual typing
         self.suggested_op = None
         self.settings_win = None
         self._pill_registry = []
@@ -74,13 +81,32 @@ class PacketWorkbenchApp:
         self.apply_theme(self.theme_name_var.get(), save=False)
         self._sync_pipeline_visibility()
 
-        for mod in ("Command", "Control"):
-            self.root.bind(f"<{mod}-f>", lambda _e: self._toggle_find_bar(show=True))
+        ws = self.root.tk.call("tk", "windowingsystem")
+        mods = ("Command", "Control") if ws == "aqua" else ("Control",)
+        for mod in mods:
+            self.root.bind(f"<{mod}-f>", self._on_find_shortcut)
             self.root.bind(f"<{mod}-comma>", lambda _e: self.open_settings_dialog())
-            self.root.bind(f"<{mod}-Shift-Z>", lambda _e: self.pipeline_redo())
-        self.root.bind("<Control-y>", lambda _e: self.pipeline_redo())
+            self.root.bind(f"<{mod}-z>", self._on_undo_shortcut)
+            self.root.bind(f"<{mod}-Shift-Z>", self._on_redo_shortcut)
+        self.root.bind("<Control-y>", self._on_redo_shortcut)
         self.root.bind("<Escape>", lambda _e: self._toggle_find_bar(show=False))
         self._load_sample()
+
+    def _on_find_shortcut(self, _event=None):
+        self._toggle_find_bar(show=True)
+        return "break"
+
+    def _on_undo_shortcut(self, event=None):
+        if event and event.widget is self.in_text:
+            return None
+        self.pipeline_undo()
+        return "break"
+
+    def _on_redo_shortcut(self, event=None):
+        if event and event.widget is self.in_text:
+            return None
+        self.pipeline_redo()
+        return "break"
 
     def _load_prefs(self) -> dict:
         try:
@@ -130,12 +156,21 @@ class PacketWorkbenchApp:
         file_menu = tk.Menu(self.menubar, tearoff=0)
         file_menu.add_command(label="Open PCAP / PCAPNG / File...", command=self.load_file)
         file_menu.add_command(label="Save Output...", command=self.save_output)
+        file_menu.add_command(label="Copy Output to Clipboard", command=self.copy_output)
         file_menu.add_separator()
         file_menu.add_command(label="Load Recipe JSON...", command=self.load_recipe)
         file_menu.add_command(label="Save Recipe JSON...", command=self.save_recipe)
         file_menu.add_separator()
         file_menu.add_command(label="Clear Workspace", command=self.clear_all)
         self.menubar.add_cascade(label="File", menu=file_menu)
+
+        edit_menu = tk.Menu(self.menubar, tearoff=0)
+        edit_menu.add_command(label="Auto-Detect Input Format", command=self.auto_detect_input)
+        edit_menu.add_command(label="Swap Output -> Input", command=self.swap_panes)
+        edit_menu.add_separator()
+        edit_menu.add_command(label="Undo Pipeline Change", command=self.pipeline_undo)
+        edit_menu.add_command(label="Redo Pipeline Change", command=self.pipeline_redo)
+        self.menubar.add_cascade(label="Edit", menu=edit_menu)
 
         view_menu = tk.Menu(self.menubar, tearoff=0)
         view_menu.add_checkbutton(label="Show Transformation Pipeline", variable=self.show_pipeline_var, command=self._sync_pipeline_visibility)
@@ -188,8 +223,10 @@ class PacketWorkbenchApp:
         self.run_all()
 
     def _pill(self, parent, text, cmd, role="neutral", padx=9, pady=3):
-        lbl = tk.Label(parent, text=text, font=FONT_UI_BOLD, padx=padx, pady=pady, cursor="hand2")
+        lbl = tk.Label(parent, text=text, font=FONT_UI_BOLD, padx=padx, pady=pady, cursor="hand2", takefocus=1)
         lbl.bind("<Button-1>", lambda _e: cmd())
+        lbl.bind("<Return>", lambda _e: cmd())
+        lbl.bind("<space>", lambda _e: cmd())
         self._pill_registry.append((lbl, role))
         return lbl
 
@@ -223,11 +260,11 @@ class PacketWorkbenchApp:
         self.p1_title = tk.Label(self.p1_hdr, text="INPUT", font=FONT_UI_BOLD)
         self.p1_title.pack(side=tk.LEFT, padx=(0, 8))
 
-        self.in_menu = tk.OptionMenu(self.p1_hdr, self.in_fmt_var, *FORMATS, command=lambda _: self.run_all())
+        self.in_menu = tk.OptionMenu(self.p1_hdr, self.in_fmt_var, *FORMATS, command=lambda _: self._on_input_format_changed())
         self.in_menu.configure(highlightthickness=0, bd=0, font=FONT_UI_BOLD, width=7)
         self.in_menu.pack(side=tk.LEFT)
 
-        self.peer_menu = tk.OptionMenu(self.p1_hdr, self.peer_var, "All Streams", "Client (peer0)", "Server (peer1)", command=lambda _: self.run_all())
+        self.peer_menu = tk.OptionMenu(self.p1_hdr, self.peer_var, "All Streams", "Client (peer0)", "Server (peer1)", command=lambda _: self._on_input_edited())
         self.peer_menu.configure(highlightthickness=0, bd=0, font=FONT_UI, width=10)
         self.peer_menu.pack(side=tk.LEFT, padx=4)
 
@@ -248,7 +285,7 @@ class PacketWorkbenchApp:
         self.in_text.grid(row=0, column=0, sticky="nsew")
         sy1.grid(row=0, column=1, sticky="ns")
         sx1.grid(row=1, column=0, sticky="ew")
-        self.in_text.bind("<KeyRelease>", lambda _: self._schedule_run())
+        self.in_text.bind("<KeyRelease>", lambda _: self._on_input_edited())
 
         # ----------------- PANE 2: PIPELINE (COLLAPSIBLE) -----------------
         self.p2 = tk.Frame(self.paned, padx=10, pady=8, highlightthickness=1)
@@ -355,6 +392,37 @@ class PacketWorkbenchApp:
 
         self._refresh_op_catalog()
 
+    def _on_input_edited(self):
+        self._canonical_input_locked = False
+        self._schedule_run()
+
+    def _on_input_format_changed(self):
+        if self._canonical_input_locked and self.raw_input_bytes:
+            self._render_input_preview(self.raw_input_bytes)
+        self.run_all()
+
+    def _render_input_preview(self, buf: bytes):
+        truncated = len(buf) > MAX_DISPLAY_BYTES
+        view_buf = buf[:MAX_DISPLAY_BYTES] if truncated else buf
+        if truncated and self.in_fmt_var.get() == "UTF-8":
+            # Trim incomplete trailing UTF-8 multi-byte sequence
+            while view_buf and (view_buf[-1] & 0xC0) == 0x80:
+                view_buf = view_buf[:-1]
+            if view_buf and view_buf[-1] >= 0xC0:
+                view_buf = view_buf[:-1]
+        rendered = ConversionEngine.from_bytes(view_buf, self.in_fmt_var.get(), "cp037", False)
+        rendered = _safe_widget_text(rendered)
+        if truncated:
+            rendered += f"\n\n... [Input preview truncated at 1 MB; full {len(buf):,} B kept in memory] ..."
+        self.in_text.delete("1.0", tk.END)
+        self.in_text.insert("1.0", rendered)
+
+    def _set_canonical_input(self, buf: bytes, fmt: str):
+        self.raw_input_bytes = buf
+        self._canonical_input_locked = True
+        self.in_fmt_var.set(fmt)
+        self._render_input_preview(buf)
+
     def _schedule_run(self):
         if self._run_job is not None:
             self.root.after_cancel(self._run_job)
@@ -403,7 +471,13 @@ class PacketWorkbenchApp:
     def _render_output_bytes(self, buf: bytes, note: str = ""):
         truncated = len(buf) > MAX_DISPLAY_BYTES
         view_buf = buf[:MAX_DISPLAY_BYTES] if truncated else buf
+        if truncated and self.out_fmt_var.get() == "UTF-8":
+            while view_buf and (view_buf[-1] & 0xC0) == 0x80:
+                view_buf = view_buf[:-1]
+            if view_buf and view_buf[-1] >= 0xC0:
+                view_buf = view_buf[:-1]
         rendered = ConversionEngine.from_bytes(view_buf, self.out_fmt_var.get(), "cp037", self.ascii_dots.get())
+        rendered = _safe_widget_text(rendered)
         if truncated:
             rendered += f"\n\n... [Display truncated at 1 MB; full {len(buf):,} B available via Save...] ..."
         self.out_text.configure(fg=self.colors["aurora_green"])
@@ -682,6 +756,7 @@ class PacketWorkbenchApp:
             chunk = ", ".join(f"0x{b:02x}" for b in welcome[i:i + 8])
             lines.append(f"    {chunk}{',' if i + 8 < len(welcome) else ''}")
         lines.append("};")
+        self._canonical_input_locked = False
         self.in_text.delete("1.0", tk.END)
         self.in_text.insert("1.0", "\n".join(lines))
         self.run_all()
@@ -705,19 +780,27 @@ class PacketWorkbenchApp:
 
     def run_all(self):
         self._run_job = None
-        raw_in = self.in_text.get("1.0", "end-1c")
-        if not raw_in.strip():
-            self.raw_input_bytes = b""
-            self.output_bytes = b""
-            self.step_snapshots = []
-            self.out_text.delete("1.0", tk.END)
-            self._refresh_recipe_box()
-            self.suggest_pill.pack_forget()
-            return
         try:
-            self.raw_input_bytes = ConversionEngine.to_bytes(raw_in, self.in_fmt_var.get(), "cp037", self.peer_var.get())
-            intel = analyze_payload(self.raw_input_bytes)
+            if not self._canonical_input_locked:
+                raw_in = self.in_text.get("1.0", "end-1c")
+                if not raw_in.strip():
+                    self.raw_input_bytes = b""
+                    self.output_bytes = b""
+                    self.step_snapshots = []
+                    self.out_text.delete("1.0", tk.END)
+                    self._refresh_recipe_box()
+                    self.suggest_pill.pack_forget()
+                    return
+                self.raw_input_bytes = ConversionEngine.to_bytes(raw_in, self.in_fmt_var.get(), "cp037", self.peer_var.get())
+            elif not self.raw_input_bytes:
+                self.output_bytes = b""
+                self.step_snapshots = []
+                self.out_text.delete("1.0", tk.END)
+                self._refresh_recipe_box()
+                self.suggest_pill.pack_forget()
+                return
 
+            intel = analyze_payload(self.raw_input_bytes)
             self.output_bytes, trace, self.step_snapshots = self.pipeline.execute(self.raw_input_bytes)
             self._refresh_recipe_box(trace)
             self._render_output_bytes(self.output_bytes)
@@ -749,11 +832,12 @@ class PacketWorkbenchApp:
         if not flow:
             return
         payload = flow.reconstructed_bytes()
-        self.in_fmt_var.set("Raw")
-        self.in_text.delete("1.0", tk.END)
-        self.in_text.insert("1.0", payload[:MAX_DISPLAY_BYTES].decode("latin-1"))
+        self._set_canonical_input(payload, "Raw")
         self.run_all()
-        self.status_var.set(f"{flow_key} ({flow.packet_count} pkts, {flow.retransmissions} retransmits skipped, {len(payload):,} B)")
+        gap_note = f", {flow.seq_gaps} seq gap(s)" if flow.seq_gaps else ""
+        self.status_var.set(
+            f"{flow_key} ({flow.packet_count} pkts, {flow.retransmissions} retransmits skipped{gap_note}, {len(payload):,} B)"
+        )
 
     def load_file(self):
         path = filedialog.askopenfilename(title="Open PCAP, PCAPNG, Stream, or Binary File")
@@ -761,7 +845,6 @@ class PacketWorkbenchApp:
             return
         with open(path, "rb") as f:
             raw = f.read()
-        # Detect capture by magic bytes (not file extension)
         is_capture = len(raw) >= 4 and raw[:4] in (
             b"\xd4\xc3\xb2\xa1",
             b"\xa1\xb2\xc3\xd4",
@@ -784,15 +867,15 @@ class PacketWorkbenchApp:
                 messagebox.showerror("Capture Parse Error", str(exc))
                 return
         self.flow_menu.pack_forget()
-        preview_raw = raw[:MAX_DISPLAY_BYTES]
         try:
-            self.in_text.delete("1.0", tk.END)
-            self.in_text.insert("1.0", preview_raw.decode("utf-8"))
-            self.auto_detect_input()
+            text_full = raw.decode("utf-8")
+            detected = ConversionEngine.auto_detect(text_full[:65536])
+            self._set_canonical_input(raw, detected)
+            if detected in ("C Array", "Hex Dump", "YAML"):
+                self._canonical_input_locked = False
+            self.run_all()
         except UnicodeDecodeError:
-            self.in_fmt_var.set("Raw")
-            self.in_text.delete("1.0", tk.END)
-            self.in_text.insert("1.0", preview_raw.decode("latin-1"))
+            self._set_canonical_input(raw, "Raw")
             self.run_all()
 
     def highlight_search(self):
@@ -810,20 +893,29 @@ class PacketWorkbenchApp:
             start = end
 
     def auto_detect_input(self):
+        if self._canonical_input_locked and self.raw_input_bytes:
+            try:
+                sample = self.raw_input_bytes[:65536].decode("utf-8")
+                self.in_fmt_var.set(ConversionEngine.auto_detect(sample))
+            except UnicodeDecodeError:
+                self.in_fmt_var.set("Raw")
+            self._render_input_preview(self.raw_input_bytes)
+            self.run_all()
+            return
         self.in_fmt_var.set(ConversionEngine.auto_detect(self.in_text.get("1.0", "end-1c")))
         self.run_all()
 
     def swap_panes(self):
-        out_val = self.out_text.get("1.0", "end-1c")
-        self.in_fmt_var.set(self.out_fmt_var.get())
-        self.in_text.delete("1.0", tk.END)
-        self.in_text.insert("1.0", out_val)
+        if not self.output_bytes:
+            return
+        self._set_canonical_input(self.output_bytes, self.out_fmt_var.get())
         self.run_all()
 
     def copy_output(self):
+        full_rendered = ConversionEngine.from_bytes(self.output_bytes, self.out_fmt_var.get(), "cp037", self.ascii_dots.get())
         self.root.clipboard_clear()
-        self.root.clipboard_append(self.out_text.get("1.0", "end-1c"))
-        self.status_var.set("Copied output to clipboard.")
+        self.root.clipboard_append(full_rendered)
+        self.status_var.set(f"Copied full output ({len(self.output_bytes):,} B) to clipboard.")
 
     def save_output(self):
         if self.out_fmt_var.get() == "Raw":
@@ -831,15 +923,19 @@ class PacketWorkbenchApp:
             if path:
                 with open(path, "wb") as f:
                     f.write(self.output_bytes)
+                self.status_var.set(f"Saved {len(self.output_bytes):,} raw bytes to {path}")
         else:
             path = filedialog.asksaveasfilename(title="Save Text Output", defaultextension=".txt")
             if path:
+                full_rendered = ConversionEngine.from_bytes(self.output_bytes, self.out_fmt_var.get(), "cp037", self.ascii_dots.get())
                 with open(path, "w", encoding="utf-8") as f:
-                    f.write(self.out_text.get("1.0", "end-1c"))
+                    f.write(full_rendered)
+                self.status_var.set(f"Saved formatted output ({len(self.output_bytes):,} B) to {path}")
 
     def clear_all(self):
         self.raw_input_bytes = b""
         self.output_bytes = b""
+        self._canonical_input_locked = False
         self.step_snapshots = []
         self.in_text.delete("1.0", tk.END)
         self.out_text.delete("1.0", tk.END)

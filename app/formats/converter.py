@@ -72,12 +72,14 @@ class ConversionEngine:
                 out.append(esc[ch] if ch in esc else ord(ch[-1]))
             else:
                 raise ValueError(f"Unsupported C Array element: {tok!r}")
-        if not out:
+        if not out and "{" not in no_comments:
             raise ValueError("No valid byte literals found in C Array input.")
         return bytes(out)
 
     @staticmethod
     def _parse_hex_dump(text: str) -> bytes:
+        if not text.strip():
+            return b""
         out = bytearray()
         for line in text.splitlines():
             s = line.strip()

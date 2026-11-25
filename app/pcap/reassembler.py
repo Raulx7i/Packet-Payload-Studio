@@ -6,6 +6,7 @@ import ipaddress
 import struct
 
 IPV6_EXT_HEADERS = {0, 43, 44, 50, 51, 60, 135, 139, 140}
+SUPPORTED_LINK_TYPES = {0, 1, 113}
 
 
 @dataclass
@@ -16,6 +17,7 @@ class FlowStream:
     dst: str
     packet_count: int = 0
     retransmissions: int = 0
+    seq_gaps: int = 0
     segments: list = field(default_factory=list)  # list of (seq, timestamp, payload_bytes)
     udp_chunks: list = field(default_factory=list)
 
@@ -24,6 +26,7 @@ class FlowStream:
             return b"".join(self.udp_chunks)
         if not self.segments:
             self.retransmissions = 0
+            self.seq_gaps = 0
             return b""
 
         def _seq_diff(a: int, b: int) -> int:
@@ -34,6 +37,7 @@ class FlowStream:
         out = bytearray()
         cursor = None
         retrans = 0
+        gaps = 0
         for seq, _ts, payload in ordered:
             if not payload:
                 continue
@@ -42,6 +46,8 @@ class FlowStream:
                 out.extend(payload)
                 cursor = rel_seq + len(payload)
             elif rel_seq >= cursor:
+                if rel_seq > cursor:
+                    gaps += 1
                 out.extend(payload)
                 cursor = rel_seq + len(payload)
             elif rel_seq + len(payload) > cursor:
@@ -51,6 +57,7 @@ class FlowStream:
             else:
                 retrans += 1
         self.retransmissions = retrans
+        self.seq_gaps = gaps
         return bytes(out)
 
 
@@ -73,6 +80,10 @@ def _iter_frames(raw: bytes):
                 break
             if btype == 0x00000001 and blen >= 16:  # Interface Description Block
                 link_type = struct.unpack(f"{endian}H", raw[pos + 8:pos + 10])[0]
+                if link_type not in SUPPORTED_LINK_TYPES:
+                    raise ValueError(
+                        f"Unsupported PCAPNG link-layer type {link_type} (supported: Ethernet=1, Loopback=0, Linux SLL=113)."
+                    )
                 iface_links.append(link_type)
             elif btype == 0x00000006 and blen >= 32:  # Enhanced Packet Block
                 iface_id, ts_hi, ts_lo, cap_len, _orig_len = struct.unpack(f"{endian}IIIII", raw[pos + 8:pos + 28])
@@ -96,7 +107,7 @@ def _iter_frames(raw: bytes):
         raise ValueError("Unrecognized capture magic bytes (expected .pcap or .pcapng).")
 
     _vmaj, _vmin, _tz, _sig, _snap, network = struct.unpack(f"{endian}HHIIII", raw[4:24])
-    if network not in (0, 1, 113):
+    if network not in SUPPORTED_LINK_TYPES:
         raise ValueError(f"Unsupported link-layer type {network} (supported: Ethernet=1, Loopback=0, Linux SLL=113).")
 
     offset = 24
@@ -163,12 +174,29 @@ def parse_capture_flows(raw: bytes) -> dict[str, FlowStream]:
             src_ip = f"[{ipaddress.IPv6Address(pkt[ip_start + 8:ip_start + 24])}]"
             dst_ip = f"[{ipaddress.IPv6Address(pkt[ip_start + 24:ip_start + 40])}]"
             l4_start = ip_start + 40
-            # Walk IPv6 extension headers
+            skip_packet = False
             while proto in IPV6_EXT_HEADERS and l4_start + 2 <= ip_end:
+                if proto == 50:  # ESP encrypts next-header + L4
+                    skip_packet = True
+                    break
                 next_hdr = pkt[l4_start]
-                ext_len = (pkt[l4_start + 1] + 1) * 8
+                if proto == 44:  # Fragment Header (fixed 8 bytes)
+                    if l4_start + 8 > ip_end:
+                        skip_packet = True
+                        break
+                    frag_field = struct.unpack("!H", pkt[l4_start + 2:l4_start + 4])[0]
+                    if (frag_field >> 3) != 0:
+                        skip_packet = True
+                        break
+                    ext_len = 8
+                elif proto == 51:  # Authentication Header: (payload_len + 2) * 4 bytes
+                    ext_len = (pkt[l4_start + 1] + 2) * 4
+                else:
+                    ext_len = (pkt[l4_start + 1] + 1) * 8
                 l4_start += ext_len
                 proto = next_hdr
+            if skip_packet:
+                continue
         else:
             continue
 
@@ -178,11 +206,11 @@ def parse_capture_flows(raw: bytes) -> dict[str, FlowStream]:
             tcp_hdr_len = ((pkt[l4_start + 12] >> 4) & 0x0F) * 4
             payload = pkt[l4_start + tcp_hdr_len:ip_end] if ip_end > l4_start + tcp_hdr_len else b""
             base_tuple = f"TCP {src_ip}:{sport} -> {dst_ip}:{dport}"
-            # Split reused 4-tuples when a fresh SYN arrives
-            if (flags & 0x02) and base_tuple in conn_epoch and flows.get(f"{base_tuple}#{conn_epoch[base_tuple]}"):
-                if flows[f"{base_tuple}#{conn_epoch[base_tuple]}"].segments:
-                    conn_epoch[base_tuple] += 1
             ep = conn_epoch.setdefault(base_tuple, 1)
+            cur_key = base_tuple if ep == 1 else f"{base_tuple} (conn #{ep})"
+            if (flags & 0x02) and cur_key in flows and flows[cur_key].segments:
+                ep += 1
+                conn_epoch[base_tuple] = ep
             key = base_tuple if ep == 1 else f"{base_tuple} (conn #{ep})"
             flow = flows.setdefault(key, FlowStream(key, "TCP", f"{src_ip}:{sport}", f"{dst_ip}:{dport}"))
             flow.packet_count += 1

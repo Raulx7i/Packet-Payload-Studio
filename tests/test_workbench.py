@@ -177,5 +177,56 @@ class TestWorkbench(unittest.TestCase):
             parsed = json.loads(out_file.read_text(encoding="utf-8"))
             self.assertEqual(parsed, {"status": "ok", "v": 1})
 
+
+    def test_zlib_detection_false_positives_and_short_streams(self):
+        from app.compression.engines import detect_compression
+        # Printable false-positive prefixes must not trigger ZLIB
+        for prefix in (b"80", b"H,", b"hb", b"X(", b"(S", b"8O", b"HK", b"XG", b"hC"):
+            algo, _ = detect_compression(prefix + b"ello world plain ASCII text")
+            self.assertEqual(algo, "None detected")
+        # Short valid level-2..5 zlib stream (0x78 0x5e header) must be detected
+        short_z = zlib.compress(b"hello short stream", level=3)
+        self.assertEqual(detect_compression(short_z)[0], "ZLIB")
+
+    def test_ipv6_ah_fragment_and_reused_4tuple_split(self):
+        from app.pcap.reassembler import parse_capture_flows
+        eth_v6 = b"\xaa" * 6 + b"\xbb" * 6 + b"\x86\xdd"
+        tcp6 = struct.pack("!HHIIBBHHH", 50000, 80, 1000, 1, 0x50, 0x18, 8192, 0, 0) + b"HELLO6"
+        # IPv6 Authentication Header (next=6, len=4 -> (4+2)*4 = 24 bytes)
+        ah = struct.pack("!BBHII", 6, 4, 0, 0x1234, 1) + b"\x00" * 12
+        body = ah + tcp6
+        v6_hdr = struct.pack("!IHBB16s16s", 0x60000000, len(body), 51, 64, b"\x20\x01" + b"\x00" * 13 + b"\x01", b"\x20\x01" + b"\x00" * 13 + b"\x02")
+        frame_ah = eth_v6 + v6_hdr + body
+        pcap_ah = struct.pack("<IHHiIII", 0xA1B2C3D4, 2, 4, 0, 0, 65535, 1) + struct.pack("<IIII", 1, 0, len(frame_ah), len(frame_ah)) + frame_ah
+        flows = parse_capture_flows(pcap_ah)
+        self.assertEqual(next(iter(flows.values())).reconstructed_bytes(), b"HELLO6")
+
+        # Reused 4-tuple with fresh SYN splits into two separate flows
+        eth_v4 = b"\xaa" * 6 + b"\xbb" * 6 + b"\x08\x00"
+        def mk_tcp(seq, payload, flags=0x18):
+            tcp = struct.pack("!HHIIBBHHH", 50000, 80, seq, 1, 0x50, flags, 8192, 0, 0) + payload
+            ip = struct.pack("!BBHHHBBH4s4s", 0x45, 0, 20 + len(tcp), 1, 0, 64, 6, 0, b"\x0a\x00\x00\x01", b"\x0a\x00\x00\x02")
+            return eth_v4 + ip + tcp
+        frames = [mk_tcp(100, b"", 0x02), mk_tcp(101, b"ONE"), mk_tcp(5000, b"", 0x02), mk_tcp(5001, b"TWO")]
+        pcap_syn = struct.pack("<IHHiIII", 0xA1B2C3D4, 2, 4, 0, 0, 65535, 1)
+        for f in frames:
+            pcap_syn += struct.pack("<IIII", 1, 0, len(f), len(f)) + f
+        split_flows = parse_capture_flows(pcap_syn)
+        self.assertEqual([f.reconstructed_bytes() for f in split_flows.values()], [b"ONE", b"TWO"])
+
+    def test_surrogate_unicode_empty_formats_and_strict_recipe_json(self):
+        from app.encoders.codecs import unicode_unescape
+        from app.formats.converter import ConversionEngine
+        from app.core.pipeline import TransformationPipeline
+        self.assertEqual(unicode_unescape(rb"\ud83d\ude00"), "😀".encode("utf-8"))
+        self.assertEqual(ConversionEngine.to_bytes(ConversionEngine.from_bytes(b"", "C Array"), "C Array"), b"")
+        self.assertEqual(ConversionEngine.to_bytes(ConversionEngine.from_bytes(b"", "Hex Dump"), "Hex Dump"), b"")
+        p = TransformationPipeline()
+        with self.assertRaises(ValueError):
+            p.load_json(json.dumps({"version": 2, "steps": [{"op_id": "nonexistent_op"}]}))
+        with self.assertRaises(ValueError):
+            p.load_json("[null]")
+
+
 if __name__ == "__main__":
     unittest.main()

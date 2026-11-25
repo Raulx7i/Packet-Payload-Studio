@@ -160,9 +160,12 @@ class TransformationPipeline:
         if not isinstance(items, list):
             raise ValueError("Invalid recipe JSON structure.")
         loaded: list[RecipeStep] = []
-        for item in items:
+        for idx, item in enumerate(items, start=1):
+            if not isinstance(item, dict):
+                raise ValueError(f"Invalid recipe step #{idx}: expected object, got {type(item).__name__}.")
             raw_id = item.get("op_id") or item.get("op_name", "")
             op_id = raw_id if raw_id in OP_REGISTRY else DISPLAY_TO_ID.get(raw_id)
-            if op_id:
-                loaded.append(RecipeStep(op_id=op_id, param=item.get("param", ""), enabled=bool(item.get("enabled", True))))
+            if not op_id:
+                raise ValueError(f"Unknown recipe operation at step #{idx}: {raw_id!r}")
+            loaded.append(RecipeStep(op_id=op_id, param=str(item.get("param", "")), enabled=bool(item.get("enabled", True))))
         self.steps = loaded
