@@ -9,6 +9,7 @@ Ready-to-run sample captures, Wireshark C arrays, encoded web payloads, and tran
 List reconstructed TCP/UDP flows inside `sample.pcap`:
 ```bash
 ppstudio --pcap examples/sample.pcap --list-streams
+# Output: TCP 10.0.0.2:80 -> 10.0.0.1:54321 | packets=1 | retrans=0 | bytes=180
 ```
 
 Extract the HTTP body, decompress GZIP, and pretty-print JSON:

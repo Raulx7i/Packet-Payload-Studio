@@ -69,6 +69,8 @@ python3 -m unittest discover -s tests -v
 
 ---
 
+> See [`examples/README.md`](examples/README.md) for ready-to-run `.pcap` captures, Wireshark C Arrays, and transformation recipes.
+
 ## Example Recipe (`recipes/http_gzip_json.json`)
 
 ~~~json
