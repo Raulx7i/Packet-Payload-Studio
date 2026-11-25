@@ -45,6 +45,21 @@ cd Packet-Payload-Studio
 python3 main.py
 ~~~
 
+### Headless CLI Mode
+
+Run recipes and extract PCAP streams directly from the terminal without opening the GUI:
+
+~~~bash
+# List all reconstructed TCP/UDP streams in a capture
+ppstudio --pcap capture.pcap --list-streams
+
+# Extract a specific stream, run a JSON recipe, and save the decoded output
+ppstudio --pcap capture.pcap --stream "TCP 10.0.0.1:52314 -> 93.184.216.34:80" --recipe recipes/http_gzip_json.json --out body.json
+
+# Convert and transform a Hex Dump or C Array file from disk or stdin
+ppstudio --input dump.txt --in-format "Hex Dump" --recipe recipe.json --out-format "UTF-8"
+~~~
+
 ### Running Tests
 
 ~~~bash
