@@ -1,7 +1,7 @@
 import tkinter as tk
-from code.app import PacketConverterApp
+from app.ui.workbench import PacketWorkbenchApp
 
 if __name__ == "__main__":
     root = tk.Tk()
-    app = PacketConverterApp(root)
+    app = PacketWorkbenchApp(root)
     root.mainloop()
