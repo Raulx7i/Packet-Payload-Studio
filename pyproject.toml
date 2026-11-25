@@ -1,0 +1,19 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "packet-payload-studio"
+version = "1.0.0"
+description = "Zero-dependency Python network payload analysis, PCAP stream reconstruction, and CyberChef-style transformation workbench."
+readme = "README.md"
+requires-python = ">=3.9"
+license = { file = "LICENSE" }
+authors = [{ name = "Raulx7i" }]
+dependencies = []
+
+[project.scripts]
+ppstudio = "app.__main__:main"
+
+[tool.setuptools.packages.find]
+include = ["app*"]
