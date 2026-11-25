@@ -1,0 +1,43 @@
+name: Build & Publish Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    strategy:
+      matrix:
+        include:
+          - os: macos-latest
+            artifact: Packet-Payload-Studio-macOS
+            pkg_cmd: zip -r dist/Packet-Payload-Studio-macOS.zip dist/Packet-Payload-Studio-macOS.app
+            file: dist/Packet-Payload-Studio-macOS.zip
+          - os: windows-latest
+            artifact: Packet-Payload-Studio-Windows
+            pkg_cmd: echo Windows exe ready
+            file: dist/Packet-Payload-Studio-Windows.exe
+          - os: ubuntu-latest
+            artifact: Packet-Payload-Studio-Linux
+            pkg_cmd: echo Linux binary ready
+            file: dist/Packet-Payload-Studio-Linux
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install PyInstaller
+        run: pip install pyinstaller
+      - name: Build standalone binary
+        run: pyinstaller --onefile --windowed --name ${{ matrix.artifact }} main.py
+      - name: Package artifact
+        run: ${{ matrix.pkg_cmd }}
+      - name: Upload release asset
+        uses: softprops/action-gh-release@v2
+        with:
+          files: ${{ matrix.file }}
