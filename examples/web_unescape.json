@@ -1,0 +1,15 @@
+{
+  "version": 2,
+  "steps": [
+    {
+      "op_id": "url_double_decode",
+      "param": "",
+      "enabled": true
+    },
+    {
+      "op_id": "html_decode",
+      "param": "",
+      "enabled": true
+    }
+  ]
+}

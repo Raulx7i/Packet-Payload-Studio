@@ -1,0 +1,10 @@
+{
+  "version": 2,
+  "steps": [
+    {
+      "op_id": "xor",
+      "param": "0x55",
+      "enabled": true
+    }
+  ]
+}
