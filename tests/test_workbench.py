@@ -1,42 +1,111 @@
+from __future__ import annotations
+
 import base64
 import gzip
 import struct
 import unittest
 
-from app.compression.engines import auto_decompress, bz2_compress, gzip_decompress, xz_compress
-from app.core.pipeline import TransformationPipeline
-from app.encoders.codecs import b58_decode, b58_encode, b62_decode, b62_encode, url_double_decode, url_double_encode
+from app.compression.engines import (
+    auto_decompress,
+    bz2_compress,
+    detect_compression,
+    gzip_decompress,
+    http_extract_body,
+    xz_compress,
+)
+from app.core.pipeline import PipelineStepError, TransformationPipeline
+from app.encoders.codecs import (
+    b58_decode,
+    b58_encode,
+    b62_decode,
+    b62_encode,
+    unicode_unescape,
+    url_decode,
+    url_double_decode,
+    url_double_encode,
+    xor_bytes,
+)
+from app.formats.converter import ConversionEngine, FORMATS
 from app.pcap.reassembler import parse_capture_flows
 from app.protocols.inspector import analyze_payload
 
 
 class TestWorkbench(unittest.TestCase):
-    def test_base_and_double_url_roundtrip(self):
+    def test_all_seven_formats_roundtrip(self):
+        sample = b"Welcome to Packet Payload Studio!"
+        for fmt in ("C Array", "Hex Dump", "YAML", "ASCII", "UTF-8", "EBCDIC", "Raw"):
+            encoded = ConversionEngine.from_bytes(sample, fmt)
+            decoded = ConversionEngine.to_bytes(encoded, fmt)
+            self.assertEqual(decoded, sample, f"Roundtrip failed for {fmt}")
+
+    def test_hexdump_variants_and_c_array_edge_cases(self):
+        # xxd format
+        xxd_str = "00000000: 4865 6c6c 6f21                           Hello!"
+        self.assertEqual(ConversionEngine.to_bytes(xxd_str, "Hex Dump"), b"Hello!")
+        # Bare hex starting with "dead" must not be stripped as an offset
+        self.assertEqual(ConversionEngine.to_bytes("dead beef", "Hex Dump"), b"\xde\xad\xbe\xef")
+        # C array with comments, decimal, negative byte, and char literal
+        c_src = "/* 0x99 */ char buf[] = { 0x48, 101, 'l', 'l', -1 }; // 0x88"
+        self.assertEqual(ConversionEngine.to_bytes(c_src, "C Array"), b"Hell\xff")
+        with self.assertRaises(ValueError):
+            ConversionEngine.to_bytes("char bad[] = { 0x1234 };", "C Array")
+
+    def test_base_url_high_bytes_unicode_and_xor(self):
         msg = b"\x00\x01Hello World!@#"
         self.assertEqual(b58_decode(b58_encode(msg)), msg)
         self.assertEqual(b62_decode(b62_encode(msg)), msg)
         self.assertEqual(url_double_encode(b"Hello World!"), b"Hello%2520World%2521")
         self.assertEqual(url_double_decode(b"Hello%2520World%2521"), b"Hello World!")
+        # High bytes (0x80..0xFF) must survive URL decode intact
+        self.assertEqual(url_decode(b"%ff%fe%80"), b"\xff\xfe\x80")
+        self.assertEqual(url_double_decode(b"%25ff%2580"), b"\xff\x80")
+        # Non-Latin-1 (CJK) with unicode escape
+        self.assertEqual(unicode_unescape("你好 \\u0041".encode("utf-8")), "你好 A".encode("utf-8"))
+        # Odd-length hex XOR key raises clear error
+        with self.assertRaises(ValueError):
+            xor_bytes(b"abc", "0x5")
 
-    def test_cyberchef_pipeline_chain(self):
+    def test_http_extract_body_and_pipeline_steps(self):
         raw_json = b'{"status":"ok","count":42}'
-        encoded = base64.b64encode(gzip.compress(raw_json))
-        pipe = TransformationPipeline()
-        pipe.add_step("Base64 Decode")
-        pipe.add_step("GZIP Decompress")
-        pipe.add_step("JSON Beautify")
-        out, trace = pipe.execute(encoded)
-        self.assertIn(b'"count": 42', out)
-        self.assertEqual(len(trace), 3)
+        gz = gzip.compress(raw_json)
+        chunk = f"{len(gz):x}\r\n".encode("ascii") + gz + b"\r\n0\r\n\r\n"
+        http_msg = b"HTTP/1.1 200 OK\r\nContent-Encoding: gzip\r\nTransfer-Encoding: chunked\r\n\r\n" + chunk
+        self.assertEqual(http_extract_body(http_msg), raw_json)
 
-    def test_compression_auto_and_bomb_limit(self):
+        pipe = TransformationPipeline()
+        pipe.add_step("http_extract_body")
+        pipe.add_step("json_beautify")
+        out, trace, snaps = pipe.execute(http_msg)
+        self.assertIn(b'"count": 42', out)
+        self.assertEqual(len(trace), 2)
+        self.assertEqual(len(snaps), 2)
+
+        # Recipe serialization roundtrip
+        pipe2 = TransformationPipeline()
+        pipe2.load_json(pipe.to_json())
+        out2, _, _ = pipe2.execute(http_msg)
+        self.assertEqual(out2, out)
+
+        # Step error reports exact step index
+        bad_pipe = TransformationPipeline()
+        bad_pipe.add_step("b64_decode")
+        with self.assertRaises(PipelineStepError) as ctx:
+            bad_pipe.execute(b"%%%not_base64%%%")
+        self.assertIn("Step 01", str(ctx.exception))
+
+    def test_compression_false_positive_and_bomb_limit(self):
+        # "x marks the spot" starts with 0x78 0x20 (mod 31 == 0) and must NOT be detected as ZLIB
+        algo, conf = detect_compression(b"x marks the spot in plain English")
+        self.assertEqual(algo, "None detected")
+        self.assertEqual(conf, 0.0)
+
         self.assertEqual(auto_decompress(bz2_compress(b"bz2-test")), b"bz2-test")
         self.assertEqual(auto_decompress(xz_compress(b"xz-test")), b"xz-test")
         bomb = gzip.compress(b"X" * 50000)
         with self.assertRaises(ValueError):
             gzip_decompress(bomb, max_bytes=1024)
 
-    def test_tcp_out_of_order_and_retransmission_reassembly(self):
+    def test_tcp_out_of_order_and_idempotent_retransmission_reassembly(self):
         eth = b"\x00" * 12 + b"\x08\x00"
 
         def make_tcp_pkt(seq, payload):
@@ -51,10 +120,14 @@ class TestWorkbench(unittest.TestCase):
         flow = next(iter(flows.values()))
         self.assertEqual(flow.reconstructed_bytes(), b"HELLOWORLD")
         self.assertEqual(flow.retransmissions, 1)
+        # Re-selecting the same flow must not inflate retransmissions
+        self.assertEqual(flow.reconstructed_bytes(), b"HELLOWORLD")
+        self.assertEqual(flow.retransmissions, 1)
 
     def test_protocol_detector(self):
         info = analyze_payload(b"POST /api/v1/login HTTP/1.1\r\nContent-Encoding: gzip\r\n\r\n")
         self.assertEqual(info["protocol"], "HTTP/1.x Message")
+        self.assertIn("HTTP Extract Body", info["suggestions"])
 
 
 if __name__ == "__main__":

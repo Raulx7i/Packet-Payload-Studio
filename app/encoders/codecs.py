@@ -1,4 +1,7 @@
+from __future__ import annotations
+
 import base64
+import codecs
 import html
 import json
 import quopri
@@ -78,7 +81,13 @@ def rot13(data: bytes) -> bytes:
 
 def xor_bytes(data: bytes, key: str = "0x55") -> bytes:
     k = key.strip()
-    key_bytes = bytes.fromhex(k[2:]) if k.startswith(("0x", "0X")) else k.encode("utf-8")
+    if k.startswith(("0x", "0X")):
+        hex_digits = k[2:]
+        if not hex_digits or len(hex_digits) % 2 != 0 or not re.fullmatch(r"[0-9a-fA-F]+", hex_digits):
+            raise ValueError(f"Hex XOR key {k!r} must have an even number of hex digits (e.g., 0x05 or 0xdeadbeef).")
+        key_bytes = bytes.fromhex(hex_digits)
+    else:
+        key_bytes = k.encode("utf-8")
     if not key_bytes:
         raise ValueError("Provide a non-empty XOR key (e.g., 0x55 or secret).")
     return bytes(b ^ key_bytes[i % len(key_bytes)] for i, b in enumerate(data))
@@ -89,14 +98,21 @@ def json_beautify(data: bytes) -> bytes:
     return json.dumps(obj, indent=2, ensure_ascii=False).encode("utf-8")
 
 
+def url_encode(data: bytes) -> bytes:
+    return urllib.parse.quote_from_bytes(data).encode("ascii")
+
+
+def url_decode(data: bytes) -> bytes:
+    # Byte-exact percent decoding without corrupting high bytes (0x80..0xFF) via UTF-8 replacement
+    return urllib.parse.unquote_to_bytes(data)
+
+
 def url_double_encode(data: bytes) -> bytes:
-    once = urllib.parse.quote_from_bytes(data).encode("ascii")
-    return urllib.parse.quote_from_bytes(once).encode("ascii")
+    return url_encode(url_encode(data))
 
 
 def url_double_decode(data: bytes) -> bytes:
-    s = data.decode("latin-1")
-    return urllib.parse.unquote_to_bytes(urllib.parse.unquote(s))
+    return urllib.parse.unquote_to_bytes(urllib.parse.unquote_to_bytes(data))
 
 
 def html_encode(data: bytes) -> bytes:
@@ -108,7 +124,13 @@ def html_decode(data: bytes) -> bytes:
 
 
 def unicode_unescape(data: bytes) -> bytes:
-    return data.decode("utf-8").encode("latin-1").decode("unicode_escape").encode("utf-8")
+    text = data.decode("utf-8")
+    # Decode \uXXXX, \UXXXXXXXX, and \xXX sequences safely even when non-ASCII CJK characters are present
+    def _repl(match: re.Match) -> str:
+        return codecs.decode(match.group(0), "unicode_escape")
+
+    unescaped = re.sub(r"\\(?:u[0-9a-fA-F]{4}|U[0-9a-fA-F]{8}|x[0-9a-fA-F]{2}|[nrtbfav\\'\"])", _repl, text)
+    return unescaped.encode("utf-8")
 
 
 def qp_encode(data: bytes) -> bytes:
@@ -159,11 +181,3 @@ def a85_encode(data: bytes) -> bytes:
 
 def a85_decode(data: bytes) -> bytes:
     return base64.a85decode(data)
-
-
-def url_encode(data: bytes) -> bytes:
-    return urllib.parse.quote_from_bytes(data).encode("ascii")
-
-
-def url_decode(data: bytes) -> bytes:
-    return urllib.parse.unquote_to_bytes(data.decode("latin-1"))

@@ -1,9 +1,11 @@
+from __future__ import annotations
+
 import hashlib
 import hmac
 import zlib
 
 
-def compute_all_digests(data: bytes, hmac_key: str = "") -> str:
+def compute_all_digests(data: bytes, hmac_key: str = "") -> bytes:
     lines = [
         f"Length       : {len(data):,} bytes",
         f"CRC32        : {zlib.crc32(data) & 0xFFFFFFFF:08x}",

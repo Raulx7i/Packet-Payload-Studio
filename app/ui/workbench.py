@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import copy
 import hashlib
 import json
@@ -6,10 +8,10 @@ import tkinter as tk
 from tkinter import filedialog, messagebox
 
 from app.core.pipeline import OPERATIONS, TransformationPipeline
+from app.formats.converter import ConversionEngine, FORMATS
 from app.pcap.reassembler import FlowStream, parse_capture_flows
 from app.protocols.inspector import analyze_payload
-from code.engine import ConversionEngine, FORMATS
-from code.theme import (
+from app.ui.theme import (
     FONT_FAMILY_MONO,
     FONT_MONO,
     FONT_MONO_SMALL,
@@ -22,6 +24,7 @@ from code.theme import (
 
 PREFS_PATH = os.path.expanduser("~/.packet_payload_studio.json")
 PARAM_OPS = {"XOR (Param = Key)", "Hash & Checksum Report (Param = HMAC Key)"}
+MAX_DISPLAY_BYTES = 1024 * 1024  # 1 MB UI preview cap; full bytes preserved for Save
 
 
 class PacketWorkbenchApp:
@@ -45,12 +48,15 @@ class PacketWorkbenchApp:
         self.pipeline = TransformationPipeline()
         self._hist = [[]]
         self._hist_idx = 0
+        self.step_snapshots: list[bytes] = []
         self.flows: dict[str, FlowStream] = {}
         self.raw_input_bytes = b""
         self.output_bytes = b""
         self.suggested_op = None
         self.settings_win = None
         self._pill_registry = []
+        self._run_job = None
+        self._prefs_job = None
 
         self.in_fmt_var = tk.StringVar(value="C Array")
         self.out_fmt_var = tk.StringVar(value="ASCII")
@@ -64,17 +70,16 @@ class PacketWorkbenchApp:
 
         self._build_menubar()
         self._build_ui()
-        self.apply_alpha(self.alpha_var.get())
+        self.apply_alpha(self.alpha_var.get(), save=False)
         self.apply_theme(self.theme_name_var.get(), save=False)
         self._sync_pipeline_visibility()
 
-        self.root.bind("<Command-f>", lambda _e: self._toggle_find_bar(show=True))
-        self.root.bind("<Control-f>", lambda _e: self._toggle_find_bar(show=True))
-        self.root.bind("<Escape>", lambda _e: self._toggle_find_bar(show=False))
-        self.root.bind("<Command-Shift-Z>", lambda _e: self.pipeline_redo())
+        for mod in ("Command", "Control"):
+            self.root.bind(f"<{mod}-f>", lambda _e: self._toggle_find_bar(show=True))
+            self.root.bind(f"<{mod}-comma>", lambda _e: self.open_settings_dialog())
+            self.root.bind(f"<{mod}-Shift-Z>", lambda _e: self.pipeline_redo())
         self.root.bind("<Control-y>", lambda _e: self.pipeline_redo())
-        self.root.bind("<Command-comma>", lambda _e: self.open_settings_dialog())
-        self.root.bind("<Control-comma>", lambda _e: self.open_settings_dialog())
+        self.root.bind("<Escape>", lambda _e: self._toggle_find_bar(show=False))
         self._load_sample()
 
     def _load_prefs(self) -> dict:
@@ -86,7 +91,13 @@ class PacketWorkbenchApp:
             pass
         return {}
 
+    def _schedule_save_prefs(self):
+        if self._prefs_job is not None:
+            self.root.after_cancel(self._prefs_job)
+        self._prefs_job = self.root.after(300, self._save_prefs)
+
     def _save_prefs(self):
+        self._prefs_job = None
         try:
             with open(PREFS_PATH, "w", encoding="utf-8") as f:
                 json.dump(
@@ -103,14 +114,15 @@ class PacketWorkbenchApp:
         except Exception:
             pass
 
-    def apply_alpha(self, val=None):
+    def apply_alpha(self, val=None, save: bool = True):
         alpha = max(0.55, min(1.0, float(val if val is not None else self.alpha_var.get())))
         self.alpha_var.set(round(alpha, 2))
         try:
             self.root.wm_attributes("-alpha", alpha)
         except tk.TclError:
             pass
-        self._save_prefs()
+        if save:
+            self._schedule_save_prefs()
 
     def _build_menubar(self):
         self.menubar = tk.Menu(self.root)
@@ -128,7 +140,7 @@ class PacketWorkbenchApp:
         view_menu = tk.Menu(self.menubar, tearoff=0)
         view_menu.add_checkbutton(label="Show Transformation Pipeline", variable=self.show_pipeline_var, command=self._sync_pipeline_visibility)
         view_menu.add_checkbutton(label="Wrap Long Lines", variable=self.wrap_var, command=self._apply_editor_prefs)
-        view_menu.add_command(label="Find in Output (Cmd+F)", command=lambda: self._toggle_find_bar(True))
+        view_menu.add_command(label="Find in Output", command=lambda: self._toggle_find_bar(True))
         self.menubar.add_cascade(label="View", menu=view_menu)
 
         settings_menu = tk.Menu(self.menubar, tearoff=0)
@@ -147,36 +159,36 @@ class PacketWorkbenchApp:
 
         presets_menu = tk.Menu(self.menubar, tearoff=0)
         presets_menu.add_command(
-            label="Base64 -> GZIP -> JSON Beautify",
-            command=lambda: self._load_preset(["Base64 Decode", "GZIP Decompress", "JSON Beautify"]),
+            label="HTTP Extract Body -> JSON Beautify",
+            command=lambda: self._load_preset(["http_extract_body", "json_beautify"]),
         )
         presets_menu.add_command(
-            label="Auto Decompress -> JSON Beautify",
-            command=lambda: self._load_preset(["Auto Decompress (Gzip/Zlib/BZ2/XZ)", "JSON Beautify"]),
+            label="Base64 -> GZIP -> JSON Beautify",
+            command=lambda: self._load_preset(["b64_decode", "gzip_decompress", "json_beautify"]),
         )
         presets_menu.add_command(
             label="Double URL Decode -> HTML Entity Decode",
-            command=lambda: self._load_preset(["Double URL Decode", "HTML Entity Decode"]),
+            command=lambda: self._load_preset(["url_double_decode", "html_decode"]),
         )
         presets_menu.add_command(
             label="Full Hash & Checksum Report",
-            command=lambda: self._load_preset(["Hash & Checksum Report (Param = HMAC Key)"]),
+            command=lambda: self._load_preset(["hash_report"]),
         )
         self.menubar.add_cascade(label="Recipes", menu=presets_menu)
 
         self.root.config(menu=self.menubar)
 
-    def _load_preset(self, step_names: list[str]):
+    def _load_preset(self, step_ids: list[str]):
         self.show_pipeline_var.set(True)
         self._sync_pipeline_visibility()
         self.pipeline.steps.clear()
-        for name in step_names:
-            self.pipeline.add_step(name)
+        for sid in step_ids:
+            self.pipeline.add_step(sid)
         self._commit_history()
         self.run_all()
 
     def _pill(self, parent, text, cmd, role="neutral", padx=9, pady=3):
-        lbl = tk.Label(parent, text=text, font=FONT_UI_BOLD, padx=padx, pady=pady, cursor="pointinghand")
+        lbl = tk.Label(parent, text=text, font=FONT_UI_BOLD, padx=padx, pady=pady, cursor="hand2")
         lbl.bind("<Button-1>", lambda _e: cmd())
         self._pill_registry.append((lbl, role))
         return lbl
@@ -219,7 +231,6 @@ class PacketWorkbenchApp:
         self.peer_menu.configure(highlightthickness=0, bd=0, font=FONT_UI, width=10)
         self.peer_menu.pack(side=tk.LEFT, padx=4)
 
-        # Flow selector appears cleanly only when a PCAP/PCAPNG is loaded
         self.flow_menu = tk.OptionMenu(self.p1_hdr, self.flow_var, "No PCAP")
         self.flow_menu.configure(highlightthickness=0, bd=0, font=FONT_MONO_SMALL)
 
@@ -237,7 +248,7 @@ class PacketWorkbenchApp:
         self.in_text.grid(row=0, column=0, sticky="nsew")
         sy1.grid(row=0, column=1, sticky="ns")
         sx1.grid(row=1, column=0, sticky="ew")
-        self.in_text.bind("<KeyRelease>", lambda _: self.run_all())
+        self.in_text.bind("<KeyRelease>", lambda _: self._schedule_run())
 
         # ----------------- PANE 2: PIPELINE (COLLAPSIBLE) -----------------
         self.p2 = tk.Frame(self.paned, padx=10, pady=8, highlightthickness=1)
@@ -253,6 +264,7 @@ class PacketWorkbenchApp:
         self.undo_pill.pack(side=tk.LEFT, padx=2)
         self.redo_pill = self._pill(self.p2_hdr, ">", self.pipeline_redo, role="muted", padx=7, pady=2)
         self.redo_pill.pack(side=tk.LEFT, padx=2)
+
         self._pill(self.p2_hdr, "Clear", self.clear_recipe, role="muted", padx=7, pady=2).pack(side=tk.RIGHT, padx=(4, 0))
         self._pill(self.p2_hdr, "Save", self.save_recipe, role="neutral", padx=7, pady=2).pack(side=tk.RIGHT, padx=2)
         self._pill(self.p2_hdr, "Load", self.load_recipe, role="neutral", padx=7, pady=2).pack(side=tk.RIGHT, padx=2)
@@ -269,7 +281,6 @@ class PacketWorkbenchApp:
         self.op_listbox.bind("<<ListboxSelect>>", lambda _e: self._on_op_select())
         self.op_listbox.bind("<Double-Button-1>", lambda _e: self.add_selected_op())
 
-        # Contextual parameter row (auto-shown only for XOR / HMAC)
         self.param_row = tk.Frame(self.p2)
         self.param_lbl = tk.Label(self.param_row, text="Key / Param:", font=FONT_UI)
         self.param_lbl.pack(side=tk.LEFT)
@@ -278,7 +289,7 @@ class PacketWorkbenchApp:
 
         self.rec_hdr = tk.Frame(self.p2)
         self.rec_hdr.grid(row=4, column=0, sticky="ew", pady=(2, 4))
-        self.rec_title = tk.Label(self.rec_hdr, text="ACTIVE STEPS", font=FONT_UI_BOLD)
+        self.rec_title = tk.Label(self.rec_hdr, text="ACTIVE STEPS (click to inspect)", font=FONT_UI_BOLD)
         self.rec_title.pack(side=tk.LEFT)
         self._pill(self.rec_hdr, "×", self.remove_step, role="red", padx=6, pady=1).pack(side=tk.RIGHT, padx=(2, 0))
         self._pill(self.rec_hdr, "On/Off", self.toggle_step, role="neutral", padx=6, pady=1).pack(side=tk.RIGHT, padx=2)
@@ -287,6 +298,7 @@ class PacketWorkbenchApp:
 
         self.recipe_listbox = tk.Listbox(self.p2, font=FONT_STATUS, bd=0, highlightthickness=1, height=7)
         self.recipe_listbox.grid(row=5, column=0, sticky="nsew")
+        self.recipe_listbox.bind("<<ListboxSelect>>", lambda _e: self._preview_selected_step())
 
         # ----------------- PANE 3: OUTPUT -----------------
         self.p3 = tk.Frame(self.paned, padx=10, pady=8, highlightthickness=1)
@@ -309,7 +321,6 @@ class PacketWorkbenchApp:
         self._pill(self.p3_hdr, "Copy", self.copy_output, role="green", padx=8, pady=2).pack(side=tk.RIGHT, padx=4)
         self._pill(self.p3_hdr, "Find", lambda: self._toggle_find_bar(), role="neutral", padx=8, pady=2).pack(side=tk.RIGHT)
 
-        # Collapsible Find Bar (hidden until Cmd+F or Find clicked)
         self.find_bar = tk.Frame(self.p3)
         self.find_lbl = tk.Label(self.find_bar, text="Find:", font=FONT_UI)
         self.find_lbl.pack(side=tk.LEFT)
@@ -344,10 +355,15 @@ class PacketWorkbenchApp:
 
         self._refresh_op_catalog()
 
+    def _schedule_run(self):
+        if self._run_job is not None:
+            self.root.after_cancel(self._run_job)
+        self._run_job = self.root.after(120, self.run_all)
+
     def _toggle_pipeline(self):
         self.show_pipeline_var.set(not self.show_pipeline_var.get())
         self._sync_pipeline_visibility()
-        self._save_prefs()
+        self._schedule_save_prefs()
 
     def _sync_pipeline_visibility(self):
         panes = self.paned.panes()
@@ -376,6 +392,54 @@ class PacketWorkbenchApp:
             self.param_row.grid(row=3, column=0, sticky="ew", pady=(0, 6))
         else:
             self.param_row.grid_forget()
+
+    def _preview_selected_step(self):
+        sel = self.recipe_listbox.curselection()
+        if not sel or not (0 <= sel[0] < len(self.step_snapshots)):
+            return
+        snap = self.step_snapshots[sel[0]]
+        self._render_output_bytes(snap, note=f"Step {sel[0] + 1:02d} preview")
+
+    def _render_output_bytes(self, buf: bytes, note: str = ""):
+        truncated = len(buf) > MAX_DISPLAY_BYTES
+        view_buf = buf[:MAX_DISPLAY_BYTES] if truncated else buf
+        rendered = ConversionEngine.from_bytes(view_buf, self.out_fmt_var.get(), "cp037", self.ascii_dots.get())
+        if truncated:
+            rendered += f"\n\n... [Display truncated at 1 MB; full {len(buf):,} B available via Save...] ..."
+        self.out_text.configure(fg=self.colors["aurora_green"])
+        self.out_text.delete("1.0", tk.END)
+        self.out_text.insert("1.0", rendered)
+        self.highlight_search()
+        if note:
+            self.status_var.set(f"{note}  •  {len(buf):,} B")
+
+    def _commit_history(self):
+        snap = copy.deepcopy(self.pipeline.steps)
+        self._hist = self._hist[: self._hist_idx + 1]
+        self._hist.append(snap)
+        self._hist_idx = len(self._hist) - 1
+        self._update_nav_pills()
+
+    def _update_nav_pills(self):
+        c = self.colors
+        if hasattr(self, "undo_pill"):
+            self.undo_pill.configure(fg=c["fg_main"] if self._hist_idx > 0 else c["fg_muted"])
+        if hasattr(self, "redo_pill"):
+            self.redo_pill.configure(fg=c["fg_main"] if self._hist_idx < len(self._hist) - 1 else c["fg_muted"])
+
+    def pipeline_undo(self):
+        if self._hist_idx > 0:
+            self._hist_idx -= 1
+            self.pipeline.steps = copy.deepcopy(self._hist[self._hist_idx])
+            self._update_nav_pills()
+            self.run_all()
+
+    def pipeline_redo(self):
+        if self._hist_idx < len(self._hist) - 1:
+            self._hist_idx += 1
+            self.pipeline.steps = copy.deepcopy(self._hist[self._hist_idx])
+            self._update_nav_pills()
+            self.run_all()
 
     def apply_theme(self, theme_name: str | None = None, save: bool = True):
         if theme_name and theme_name in THEMES:
@@ -430,12 +494,11 @@ class PacketWorkbenchApp:
         self.op_listbox.configure(bg=c["bg_editor"], fg=c["fg_main"], selectbackground=c["select_bg"], selectforeground=c["select_fg"], highlightbackground=c["border"])
         self.recipe_listbox.configure(bg=c["bg_editor"], fg=c["aurora_yellow"], selectbackground=c["select_bg"], selectforeground=c["select_fg"], highlightbackground=c["border"])
 
+        self._update_nav_pills()
         if self.settings_win and self.settings_win.winfo_exists():
             self._paint_settings_dialog()
-
-        self._update_nav_pills()
         if save:
-            self._save_prefs()
+            self._schedule_save_prefs()
 
     def _apply_editor_prefs(self):
         sz = max(9, min(20, int(self.font_size_var.get())))
@@ -443,7 +506,7 @@ class PacketWorkbenchApp:
         mono = (FONT_FAMILY_MONO, sz)
         self.in_text.configure(font=mono, wrap=wrap_mode)
         self.out_text.configure(font=mono, wrap=wrap_mode)
-        self._save_prefs()
+        self._schedule_save_prefs()
 
     def open_settings_dialog(self):
         if self.settings_win and self.settings_win.winfo_exists():
@@ -547,34 +610,6 @@ class PacketWorkbenchApp:
                 line += f"  ({step.param})"
             self.recipe_listbox.insert(tk.END, line)
 
-    def _commit_history(self):
-        snap = copy.deepcopy(self.pipeline.steps)
-        self._hist = self._hist[: self._hist_idx + 1]
-        self._hist.append(snap)
-        self._hist_idx = len(self._hist) - 1
-        self._update_nav_pills()
-
-    def _update_nav_pills(self):
-        c = self.colors
-        if hasattr(self, "undo_pill"):
-            self.undo_pill.configure(fg=c["fg_main"] if self._hist_idx > 0 else c["fg_muted"])
-        if hasattr(self, "redo_pill"):
-            self.redo_pill.configure(fg=c["fg_main"] if self._hist_idx < len(self._hist) - 1 else c["fg_muted"])
-
-    def pipeline_undo(self):
-        if self._hist_idx > 0:
-            self._hist_idx -= 1
-            self.pipeline.steps = copy.deepcopy(self._hist[self._hist_idx])
-            self._update_nav_pills()
-            self.run_all()
-
-    def pipeline_redo(self):
-        if self._hist_idx < len(self._hist) - 1:
-            self._hist_idx += 1
-            self.pipeline.steps = copy.deepcopy(self._hist[self._hist_idx])
-            self._update_nav_pills()
-            self.run_all()
-
     def add_selected_op(self):
         sel = self.op_listbox.curselection()
         if not sel:
@@ -627,12 +662,15 @@ class PacketWorkbenchApp:
     def load_recipe(self):
         path = filedialog.askopenfilename(title="Load Recipe JSON", initialdir="recipes")
         if path:
-            with open(path, "r", encoding="utf-8") as f:
-                self.pipeline.load_json(f.read())
-            self._commit_history()
-            self.show_pipeline_var.set(True)
-            self._sync_pipeline_visibility()
-            self.run_all()
+            try:
+                with open(path, "r", encoding="utf-8") as f:
+                    self.pipeline.load_json(f.read())
+                self._commit_history()
+                self.show_pipeline_var.set(True)
+                self._sync_pipeline_visibility()
+                self.run_all()
+            except Exception as exc:
+                messagebox.showerror("Recipe Load Error", str(exc))
 
     def _load_sample(self):
         welcome = b"Welcome to Packet Payload Studio"
@@ -649,9 +687,10 @@ class PacketWorkbenchApp:
         if not self.suggested_op:
             return
         mapping = {
-            "GZIP / Auto Decompress": "Auto Decompress (Gzip/Zlib/BZ2/XZ)",
-            "Base64 Decode": "Base64 Decode",
-            "JSON Beautify": "JSON Beautify",
+            "HTTP Extract Body": "http_extract_body",
+            "Auto Decompress": "auto_decompress",
+            "Base64 Decode": "b64_decode",
+            "JSON Beautify": "json_beautify",
         }
         op = mapping.get(self.suggested_op)
         if op:
@@ -662,10 +701,12 @@ class PacketWorkbenchApp:
             self.run_all()
 
     def run_all(self):
+        self._run_job = None
         raw_in = self.in_text.get("1.0", "end-1c")
         if not raw_in.strip():
             self.raw_input_bytes = b""
             self.output_bytes = b""
+            self.step_snapshots = []
             self.out_text.delete("1.0", tk.END)
             self._refresh_recipe_box()
             self.suggest_pill.pack_forget()
@@ -674,14 +715,9 @@ class PacketWorkbenchApp:
             self.raw_input_bytes = ConversionEngine.to_bytes(raw_in, self.in_fmt_var.get(), "cp037", self.peer_var.get())
             intel = analyze_payload(self.raw_input_bytes)
 
-            self.output_bytes, trace = self.pipeline.execute(self.raw_input_bytes)
+            self.output_bytes, trace, self.step_snapshots = self.pipeline.execute(self.raw_input_bytes)
             self._refresh_recipe_box(trace)
-
-            rendered = ConversionEngine.from_bytes(self.output_bytes, self.out_fmt_var.get(), "cp037", self.ascii_dots.get())
-            self.out_text.configure(fg=self.colors["aurora_green"])
-            self.out_text.delete("1.0", tk.END)
-            self.out_text.insert("1.0", rendered)
-            self.highlight_search()
+            self._render_output_bytes(self.output_bytes)
 
             sha_short = hashlib.sha256(self.output_bytes).hexdigest()[:12]
             self.status_var.set(
@@ -696,6 +732,8 @@ class PacketWorkbenchApp:
                 self.suggested_op = None
                 self.suggest_pill.pack_forget()
         except Exception as exc:
+            self.output_bytes = b""
+            self.step_snapshots = []
             self.out_text.configure(fg=self.colors["aurora_red"])
             self.out_text.delete("1.0", tk.END)
             self.out_text.insert("1.0", f"[Error]\n{exc}")
@@ -710,7 +748,7 @@ class PacketWorkbenchApp:
         payload = flow.reconstructed_bytes()
         self.in_fmt_var.set("Raw")
         self.in_text.delete("1.0", tk.END)
-        self.in_text.insert("1.0", payload.decode("latin-1"))
+        self.in_text.insert("1.0", payload[:MAX_DISPLAY_BYTES].decode("latin-1"))
         self.run_all()
         self.status_var.set(f"{flow_key} ({flow.packet_count} pkts, {flow.retransmissions} retransmits skipped, {len(payload):,} B)")
 
@@ -720,7 +758,15 @@ class PacketWorkbenchApp:
             return
         with open(path, "rb") as f:
             raw = f.read()
-        if path.lower().endswith((".pcap", ".pcapng", ".cap")):
+        # Detect capture by magic bytes (not file extension)
+        is_capture = len(raw) >= 4 and raw[:4] in (
+            b"\xd4\xc3\xb2\xa1",
+            b"\xa1\xb2\xc3\xd4",
+            b"\x4d\x3c\xb2\xa1",
+            b"\xa1\xb2\x3c\x4d",
+            b"\x0a\x0d\x0d\x0a",
+        )
+        if is_capture:
             try:
                 self.flows = parse_capture_flows(raw)
                 menu = self.flow_menu["menu"]
@@ -735,14 +781,15 @@ class PacketWorkbenchApp:
                 messagebox.showerror("Capture Parse Error", str(exc))
                 return
         self.flow_menu.pack_forget()
+        preview_raw = raw[:MAX_DISPLAY_BYTES]
         try:
             self.in_text.delete("1.0", tk.END)
-            self.in_text.insert("1.0", raw.decode("utf-8"))
+            self.in_text.insert("1.0", preview_raw.decode("utf-8"))
             self.auto_detect_input()
         except UnicodeDecodeError:
             self.in_fmt_var.set("Raw")
             self.in_text.delete("1.0", tk.END)
-            self.in_text.insert("1.0", raw.decode("latin-1"))
+            self.in_text.insert("1.0", preview_raw.decode("latin-1"))
             self.run_all()
 
     def highlight_search(self):
@@ -788,9 +835,13 @@ class PacketWorkbenchApp:
                     f.write(self.out_text.get("1.0", "end-1c"))
 
     def clear_all(self):
+        self.raw_input_bytes = b""
+        self.output_bytes = b""
+        self.step_snapshots = []
         self.in_text.delete("1.0", tk.END)
         self.out_text.delete("1.0", tk.END)
         self.pipeline.steps.clear()
+        self._commit_history()
         self._refresh_recipe_box()
         self.suggest_pill.pack_forget()
         self.status_var.set("Cleared.")

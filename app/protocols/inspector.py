@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import json
 import math
 import re
@@ -17,9 +19,12 @@ def shannon_entropy(data: bytes) -> float:
 def analyze_payload(data: bytes) -> dict:
     """Identify protocol, compression, encoding, and structural anomalies."""
     if not data:
-        return {"protocol": "Empty", "confidence": 0, "notes": [], "suggestions": []}
+        return {"protocol": "Empty", "confidence": 0, "entropy": 0.0, "notes": [], "suggestions": []}
 
     ent = shannon_entropy(data)
+    max_possible_ent = math.log2(min(len(data), 256)) if len(data) > 1 else 1.0
+    norm_ent = ent / max_possible_ent if max_possible_ent > 0 else 0.0
+
     comp_algo, comp_conf = detect_compression(data)
     protocol = "Unknown Binary / Custom Protocol"
     confidence = 40
@@ -32,11 +37,10 @@ def analyze_payload(data: bytes) -> dict:
         confidence = 99
         if re.search(rb"(?i)content-encoding:\s*gzip", head):
             notes.append("HTTP header declares Content-Encoding: gzip")
-            suggestions.append("GZIP / Auto Decompress")
         if re.search(rb"(?i)transfer-encoding:\s*chunked", head):
             notes.append("HTTP uses Transfer-Encoding: chunked")
-        if re.search(rb"(?i)content-type:\s*application/json", head):
-            suggestions.append("JSON Beautify")
+        if b"\r\n\r\n" in data:
+            suggestions.append("HTTP Extract Body")
     elif len(data) >= 5 and data[0] in (0x14, 0x15, 0x16, 0x17) and data[1:3] in (b"\x03\x01", b"\x03\x02", b"\x03\x03", b"\x03\x04"):
         rec_types = {0x14: "ChangeCipherSpec", 0x15: "Alert", 0x16: "Handshake", 0x17: "ApplicationData"}
         protocol = f"TLS Record ({rec_types[data[0]]})"
@@ -45,7 +49,7 @@ def analyze_payload(data: bytes) -> dict:
     elif comp_conf >= 0.90:
         protocol = f"{comp_algo} Compressed Stream"
         confidence = int(comp_conf * 100)
-        suggestions.append("GZIP / Auto Decompress")
+        suggestions.append("Auto Decompress")
     elif data.lstrip()[:1] in (b"{", b"["):
         try:
             json.loads(data.decode("utf-8"))
@@ -71,10 +75,10 @@ def analyze_payload(data: bytes) -> dict:
         confidence = 82
         suggestions.append("Base64 Decode")
 
-    if ent > 7.35:
-        notes.append(f"High Shannon entropy ({ent:.2f}/8.00) — indicates encryption, compression, or random key material")
-    elif ent < 1.5 and len(data) > 32:
-        notes.append(f"Very low entropy ({ent:.2f}/8.00) — high byte repetition or null padding")
+    if len(data) >= 32 and norm_ent > 0.92:
+        notes.append(f"High normalized entropy ({ent:.2f}/8.00, {norm_ent * 100:.0f}% of max)")
+    elif len(data) >= 32 and norm_ent < 0.20:
+        notes.append(f"Very low entropy ({ent:.2f}/8.00) — repetitive or padded data")
 
     null_ratio = data.count(0) / len(data)
     if null_ratio > 0.30:
