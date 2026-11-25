@@ -40,7 +40,7 @@ class PacketWorkbenchApp:
             self.theme_name_var.set("Nord Frost (Dark)")
         self.colors = THEMES[self.theme_name_var.get()].copy()
 
-        self.alpha_var = tk.DoubleVar(value=float(prefs.get("alpha", 0.96)))
+        self.alpha_var = tk.DoubleVar(value=float(prefs.get("alpha", 0.90)))
         self.font_size_var = tk.IntVar(value=int(prefs.get("font_size", 12)))
         self.wrap_var = tk.BooleanVar(value=bool(prefs.get("word_wrap", False)))
         self.show_pipeline_var = tk.BooleanVar(value=bool(prefs.get("show_pipeline", True)))
@@ -259,15 +259,15 @@ class PacketWorkbenchApp:
         self.p2_hdr = tk.Frame(self.p2)
         self.p2_hdr.grid(row=0, column=0, sticky="ew", pady=(0, 8))
         self.p2_title = tk.Label(self.p2_hdr, text="PIPELINE", font=FONT_UI_BOLD)
-        self.p2_title.pack(side=tk.LEFT, padx=(0, 8))
-        self.undo_pill = self._pill(self.p2_hdr, "<", self.pipeline_undo, role="muted", padx=7, pady=2)
-        self.undo_pill.pack(side=tk.LEFT, padx=2)
-        self.redo_pill = self._pill(self.p2_hdr, ">", self.pipeline_redo, role="muted", padx=7, pady=2)
-        self.redo_pill.pack(side=tk.LEFT, padx=2)
+        self.p2_title.pack(side=tk.LEFT, padx=(0, 6))
+        self.undo_pill = self._pill(self.p2_hdr, "<", self.pipeline_undo, role="muted", padx=6, pady=2)
+        self.undo_pill.pack(side=tk.LEFT, padx=1)
+        self.redo_pill = self._pill(self.p2_hdr, ">", self.pipeline_redo, role="muted", padx=6, pady=2)
+        self.redo_pill.pack(side=tk.LEFT, padx=1)
 
-        self._pill(self.p2_hdr, "Clear", self.clear_recipe, role="muted", padx=7, pady=2).pack(side=tk.RIGHT, padx=(4, 0))
-        self._pill(self.p2_hdr, "Save", self.save_recipe, role="neutral", padx=7, pady=2).pack(side=tk.RIGHT, padx=2)
-        self._pill(self.p2_hdr, "Load", self.load_recipe, role="neutral", padx=7, pady=2).pack(side=tk.RIGHT, padx=2)
+        self._pill(self.p2_hdr, "Clear", self.clear_recipe, role="muted", padx=8, pady=2).pack(side=tk.RIGHT, padx=(3, 0))
+        self._pill(self.p2_hdr, "Save", self.save_recipe, role="neutral", padx=8, pady=2).pack(side=tk.RIGHT, padx=2)
+        self._pill(self.p2_hdr, "Load", self.load_recipe, role="neutral", padx=8, pady=2).pack(side=tk.RIGHT, padx=2)
 
         self.search_bar = tk.Frame(self.p2)
         self.search_bar.grid(row=1, column=0, sticky="ew", pady=(0, 6))
@@ -341,9 +341,9 @@ class PacketWorkbenchApp:
         sy3.grid(row=0, column=1, sticky="ns")
         sx3.grid(row=1, column=0, sticky="ew")
 
-        self.paned.add(self.p1, minsize=340, stretch="always")
-        self.paned.add(self.p2, minsize=300, stretch="always")
-        self.paned.add(self.p3, minsize=340, stretch="always")
+        self.paned.add(self.p1, minsize=340, width=460, stretch="always")
+        self.paned.add(self.p2, minsize=360, width=440, stretch="always")
+        self.paned.add(self.p3, minsize=390, width=480, stretch="always")
 
         # ================= UNIFIED TELEMETRY & STATUS BAR =================
         self.status_bar = tk.Frame(self.root, padx=14, pady=6, highlightthickness=1)
@@ -369,7 +369,7 @@ class PacketWorkbenchApp:
         panes = self.paned.panes()
         if self.show_pipeline_var.get():
             if str(self.p2) not in panes:
-                self.paned.add(self.p2, before=self.p3, minsize=300, stretch="always")
+                self.paned.add(self.p2, before=self.p3, minsize=360, width=440, stretch="always")
             self.pipe_toggle_pill.configure(text="Pipeline: ON")
         else:
             if str(self.p2) in panes:
