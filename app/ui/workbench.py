@@ -515,7 +515,7 @@ class PacketWorkbenchApp:
 
         win = tk.Toplevel(self.root)
         win.title("Workspace Settings — Live 3-Panel Preview")
-        win.geometry("420x360+40+60")
+        win.geometry("430x395+40+60")
         win.resizable(False, False)
         win.transient(self.root)
         self.settings_win = win
@@ -569,9 +569,11 @@ class PacketWorkbenchApp:
         )
         self.font_slider.pack(fill=tk.X, pady=(4, 12))
 
-        close_btn = tk.Button(self.set_body, text="Done", font=FONT_UI_BOLD, padx=14, pady=4, command=win.destroy)
-        close_btn.pack(anchor="e")
-        self.set_close_btn = close_btn
+        btn_row = tk.Frame(self.set_body)
+        btn_row.pack(fill=tk.X, pady=(8, 0))
+        self.set_btn_row = btn_row
+        self.set_close_btn = self._pill(btn_row, "Done", win.destroy, role="cyan", padx=18, pady=5)
+        self.set_close_btn.pack(side=tk.RIGHT)
 
         self._paint_settings_dialog()
 
@@ -588,7 +590,8 @@ class PacketWorkbenchApp:
         self.font_slider.configure(bg=c["bg_card"], troughcolor=c["bg_elevated"], activebackground=c["frost_cyan"])
         for rb in self.theme_radios:
             rb.configure(bg=c["bg_card"], fg=c["fg_main"], selectcolor=c["bg_editor"], activebackground=c["bg_card"], activeforeground=c["fg_main"])
-        self.set_close_btn.configure(bg=c["bg_elevated"], fg=c["fg_main"])
+        self.set_btn_row.configure(bg=c["bg_card"])
+        self.set_close_btn.configure(bg=c["frost_cyan"], fg=c["text_dark"])
 
     def _refresh_op_catalog(self):
         q = self.op_search_var.get().strip().lower()

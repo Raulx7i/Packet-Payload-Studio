@@ -2,7 +2,7 @@
 
 A zero-dependency Python network payload analysis, packet stream reconstruction, and CyberChef-style transformation workbench built with Tkinter and the Nord palette.
 
-![Packet Payload Studio Preview](preview.png)
+![Packet Payload Studio Preview](assets/preview.png)
 
 ## Features
 
