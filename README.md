@@ -51,6 +51,7 @@ Run recipes and extract PCAP streams directly from the terminal without opening 
 
 ~~~bash
 # List all reconstructed TCP/UDP streams in a capture
+pip install .  # installs the `ppstudio` CLI command
 ppstudio --pcap capture.pcap --list-streams
 
 # Extract a specific stream, run a JSON recipe, and save the decoded output

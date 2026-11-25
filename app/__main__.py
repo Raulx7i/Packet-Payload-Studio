@@ -1,3 +1,4 @@
+from __future__ import annotations
 import argparse
 import sys
 from pathlib import Path
@@ -85,6 +86,8 @@ def run_cli(argv: list[str]) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
 
+    if not args.pcap and not args.input:
+        parser.error("one of --pcap or --input is required in CLI mode")
     if args.list_streams and not args.pcap:
         parser.error("--list-streams requires --pcap")
 
@@ -111,7 +114,9 @@ def run_cli(argv: list[str]) -> int:
         else:
             text_in = raw_in.decode("utf-8", errors="replace")
             fmt = ConversionEngine.auto_detect(text_in) if args.in_format == "Auto" else args.in_format
-            payload = ConversionEngine.to_bytes(text_in, fmt, peer_filter=args.peer)
+            peer_map = {"peer0": "Client (peer0)", "client": "Client (peer0)", "peer1": "Server (peer1)", "server": "Server (peer1)", "all": "All Streams"}
+            normalized_peer = peer_map.get(args.peer.strip().lower(), args.peer)
+            payload = ConversionEngine.to_bytes(text_in, fmt, peer_filter=normalized_peer)
 
     pipeline = TransformationPipeline()
     if args.recipe:
