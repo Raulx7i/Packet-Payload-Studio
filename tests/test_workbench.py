@@ -130,5 +130,52 @@ class TestWorkbench(unittest.TestCase):
         self.assertIn("HTTP Extract Body", info["suggestions"])
 
 
+
+    def test_headless_cli_pcap_and_recipe_pipeline(self):
+        import gzip
+        import json
+        import struct
+        import tempfile
+        from pathlib import Path
+        from app.__main__ import main as cli_main
+
+        body = json.dumps({"status": "ok", "v": 1}).encode("utf-8")
+        gz = gzip.compress(body)
+        http_payload = (
+            b"HTTP/1.1 200 OK\r\n"
+            b"Content-Encoding: gzip\r\n"
+            + f"Content-Length: {len(gz)}\r\n\r\n".encode("ascii")
+            + gz
+        )
+
+        # Build minimal Ethernet + IPv4 + TCP PCAP
+        eth = b"\xaa" * 6 + b"\xbb" * 6 + b"\x08\x00"
+        tcp_len = 20 + len(http_payload)
+        ip_total = 20 + tcp_len
+        ip = struct.pack("!BBHHHBBH4s4s", 0x45, 0, ip_total, 1, 0, 64, 6, 0, b"\x0a\x00\x00\x01", b"\x0a\x00\x00\x02")
+        tcp = struct.pack("!HHIIBBHHH", 12345, 80, 1000, 1, (5 << 4), 0x18, 65535, 0, 0)
+        frame = eth + ip + tcp + http_payload
+        pcap_bytes = struct.pack("<IHHiIII", 0xA1B2C3D4, 2, 4, 0, 0, 65535, 1) + struct.pack("<IIII", 1, 0, len(frame), len(frame)) + frame
+
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            pcap_file = tmp_path / "sample.pcap"
+            recipe_file = tmp_path / "recipe.json"
+            out_file = tmp_path / "decoded.json"
+
+            pcap_file.write_bytes(pcap_bytes)
+            recipe_file.write_text(json.dumps({
+                "version": 2,
+                "steps": [
+                    {"op_id": "http_extract_body", "param": "", "enabled": True},
+                    {"op_id": "json_beautify", "param": "", "enabled": True},
+                ]
+            }), encoding="utf-8")
+
+            rc = cli_main(["--pcap", str(pcap_file), "--recipe", str(recipe_file), "--out", str(out_file)])
+            self.assertEqual(rc, 0)
+            parsed = json.loads(out_file.read_text(encoding="utf-8"))
+            self.assertEqual(parsed, {"status": "ok", "v": 1})
+
 if __name__ == "__main__":
     unittest.main()
