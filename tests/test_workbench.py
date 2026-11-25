@@ -1,4 +1,6 @@
 from __future__ import annotations
+import zlib
+import json
 
 import base64
 import gzip

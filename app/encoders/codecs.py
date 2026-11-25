@@ -133,7 +133,7 @@ def unicode_unescape(data: bytes) -> bytes:
         _repl,
         text,
     )
-    return unescaped.encode("utf-8", errors="surrogatepass").decode("utf-8", errors="replace").encode("utf-8")
+    return unescaped.encode("utf-16-le", errors="surrogatepass").decode("utf-16-le", errors="replace").encode("utf-8")
 
 
 def qp_encode(data: bytes) -> bytes:
