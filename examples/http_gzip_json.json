@@ -1,0 +1,15 @@
+{
+  "version": 2,
+  "steps": [
+    {
+      "op_id": "http_extract_body",
+      "param": "",
+      "enabled": true
+    },
+    {
+      "op_id": "json_beautify",
+      "param": "",
+      "enabled": true
+    }
+  ]
+}
