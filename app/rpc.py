@@ -175,6 +175,47 @@ def handle_request(method: str, params: dict[str, Any]) -> Any:
             "byte_length": len(payload),
         }
 
+    if method == "compare_payloads":
+        left_text = params.get("left_text", "")
+        right_text = params.get("right_text", "")
+        left_fmt = params.get("left_format", "UTF-8")
+        right_fmt = params.get("right_format", "UTF-8")
+        left_peer = params.get("left_peer") or "All Streams"
+        right_peer = params.get("right_peer") or "All Streams"
+
+        left_bytes = ConversionEngine.to_bytes(left_text, left_fmt, peer_filter=left_peer)
+        right_bytes = ConversionEngine.to_bytes(right_text, right_fmt, peer_filter=right_peer)
+
+        max_len = max(len(left_bytes), len(right_bytes))
+        min_len = min(len(left_bytes), len(right_bytes))
+        differing_offsets = [i for i in range(min_len) if left_bytes[i] != right_bytes[i]]
+        differing_offsets.extend(range(min_len, max_len))
+
+        rows = []
+        preview_limit = min(max_len, 4096)
+        for offset in range(0, preview_limit, 16):
+            l_chunk = left_bytes[offset : offset + 16]
+            r_chunk = right_bytes[offset : offset + 16]
+            row_diff = [i for i in range(16) if (l_chunk[i] if i < len(l_chunk) else None) != (r_chunk[i] if i < len(r_chunk) else None)]
+            rows.append({
+                "offset": f"{offset:08x}",
+                "left_hex": [f"{b:02x}" for b in l_chunk],
+                "right_hex": [f"{b:02x}" for b in r_chunk],
+                "left_ascii": "".join(chr(b) if 32 <= b <= 126 else "." for b in l_chunk),
+                "right_ascii": "".join(chr(b) if 32 <= b <= 126 else "." for b in r_chunk),
+                "diff_cols": row_diff,
+            })
+
+        similarity = round(((max_len - len(differing_offsets)) / max_len) * 100.0, 2) if max_len else 100.0
+        return {
+            "left_bytes": len(left_bytes),
+            "right_bytes": len(right_bytes),
+            "diff_count": len(differing_offsets),
+            "similarity_pct": similarity,
+            "rows": rows,
+            "truncated": max_len > preview_limit,
+        }
+
     if method == "list_example_recipes":
         ex_dir = ROOT / "examples"
         recipes = []
