@@ -7,7 +7,7 @@ a = Analysis(
     [str(ROOT / "app" / "rpc.py")],
     pathex=[str(ROOT)],
     binaries=[],
-    datas=[],
+    datas=[(str(ROOT / "examples"), "examples")],
     hiddenimports=[
         "app.core.pipeline",
         "app.formats.converter",
@@ -17,9 +17,13 @@ a = Analysis(
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
-    excludes=["tkinter", "_tkinter"],
+    excludes=[
+        "tkinter", "_tkinter", "unittest", "test", "pydoc", "doctest",
+        "pdb", "sqlite3", "ftplib", "imaplib", "poplib", "smtplib",
+        "xmlrpc", "turtle", "turtledemo",
+    ],
     noarchive=False,
-    optimize=0,
+    optimize=2,
 )
 pyz = PYZ(a.pure)
 
@@ -32,7 +36,7 @@ exe = EXE(
     name="ppstudio-backend",
     debug=False,
     bootloader_ignore_signals=False,
-    strip=False,
+    strip=True,
     upx=False,
     console=True,
 )

@@ -1,5 +1,5 @@
 import React from "react";
-import { ArrowLeftRight, Microscope, Network, Layers, GitCompare, Settings, PanelLeftClose, PanelLeftOpen, Terminal } from "lucide-react";
+import { ArrowLeftRight, Microscope, Network, Layers, GitCompare, Settings, PanelLeftClose, PanelLeftOpen } from "lucide-react";
 import { WorkspaceId } from "../../store/settings";
 
 interface Props {
@@ -20,7 +20,7 @@ export const Sidebar: React.FC<Props> = ({ active, onSelect, collapsed, onToggle
     <div className="flex h-12 items-center justify-between border-b border-borderSubtle px-3">
       {!collapsed && (
         <div className="flex items-center gap-2 overflow-hidden">
-          <Terminal className="h-4 w-4 shrink-0 text-accent" />
+          <img src="/pps-logo.png" alt="PPSTUDIO" className="h-5 w-5 shrink-0 rounded object-cover" />
           <span className="truncate text-xs font-semibold tracking-wide">PPSTUDIO</span>
         </div>
       )}

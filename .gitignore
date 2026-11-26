@@ -43,3 +43,5 @@ src-tauri/target/
 src-tauri/binaries/ppstudio-backend*
 build/
 dist/
+
+src-tauri/gen/

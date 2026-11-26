@@ -7,9 +7,14 @@ import os
 import sys
 import traceback
 from pathlib import Path
+import sys as _sys
+def _resource_root() -> Path:
+    if getattr(_sys, 'frozen', False) and hasattr(_sys, '_MEIPASS'):
+        return Path(_sys._MEIPASS)
+    return Path(__file__).resolve().parent.parent
 from typing import Any
 
-ROOT = Path(__file__).resolve().parent.parent
+ROOT = _resource_root()
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
@@ -143,9 +148,9 @@ def handle_request(method: str, params: dict[str, Any]) -> Any:
         flows = parse_capture_flows(Path(pcap_path).read_bytes())
         streams = []
         for idx, (key, flow) in enumerate(flows.items()):
-            payload = getattr(flow, "payload", b"")
-            pkts = getattr(flow, "packets", getattr(flow, "packet_count", 0))
-            retrans = getattr(flow, "retransmissions", getattr(flow, "retrans", 0))
+            payload = flow.reconstructed_bytes()
+            pkts = flow.packet_count
+            retrans = flow.retransmissions
             streams.append({
                 "index": idx,
                 "key": str(key),
@@ -169,7 +174,7 @@ def handle_request(method: str, params: dict[str, Any]) -> Any:
             flow = flows[stream_key]
         else:
             _, flow = items[min(stream_index, len(items) - 1)]
-        payload = getattr(flow, "payload", b"")
+        payload = flow.reconstructed_bytes()
         return {
             "payload_text": ConversionEngine.from_bytes(payload, out_format),
             "byte_length": len(payload),
