@@ -1,0 +1,53 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root, [data-theme="dark"] {
+  --bg-canvas: #090b0f;
+  --bg-surface: #12151c;
+  --bg-elevated: #181c26;
+  --bg-chrome: rgba(18, 21, 28, var(--glass-alpha, 0.68));
+  --border-subtle: rgba(255, 255, 255, 0.09);
+  --text-primary: #e6edf3;
+  --text-secondary: #8b949e;
+  --shadow-chrome: 0 8px 32px rgba(0, 0, 0, 0.45);
+  --backdrop-blur: blur(var(--glass-blur, 18px));
+  --ambient-glow: radial-gradient(circle at 12% 10%, rgba(6, 182, 212, 0.14), transparent 38%),
+                  radial-gradient(circle at 88% 85%, rgba(59, 130, 246, 0.10), transparent 42%);
+}
+
+[data-theme="light"] {
+  --bg-canvas: #e6ebf2;
+  --bg-surface: #f8fafc;
+  --bg-elevated: #ffffff;
+  --bg-chrome: rgba(255, 255, 255, var(--glass-alpha, 0.72));
+  --border-subtle: rgba(15, 23, 42, 0.10);
+  --text-primary: #0f172a;
+  --text-secondary: #475569;
+  --shadow-chrome: 0 8px 24px rgba(15, 23, 42, 0.08);
+  --backdrop-blur: blur(var(--glass-blur, 18px));
+  --ambient-glow: radial-gradient(circle at 12% 10%, rgba(6, 182, 212, 0.16), transparent 40%),
+                  radial-gradient(circle at 88% 85%, rgba(14, 165, 233, 0.12), transparent 44%);
+}
+
+[data-accent="cyan"] { --accent: #06b6d4; --accent-muted: rgba(6, 182, 212, 0.16); }
+[data-accent="teal"] { --accent: #14b8a6; --accent-muted: rgba(20, 184, 166, 0.16); }
+[data-accent="emerald"] { --accent: #10b981; --accent-muted: rgba(16, 185, 129, 0.16); }
+[data-accent="blue"] { --accent: #3b82f6; --accent-muted: rgba(59, 130, 246, 0.16); }
+[data-accent="amber"] { --accent: #f59e0b; --accent-muted: rgba(245, 158, 11, 0.16); }
+
+[data-transparency="false"] { --glass-alpha: 1; --backdrop-blur: none; }
+
+.app-canvas {
+  background-color: var(--bg-canvas);
+  background-image: var(--ambient-glow);
+}
+
+.glass-chrome {
+  background-color: var(--bg-chrome);
+  backdrop-filter: var(--backdrop-blur);
+  -webkit-backdrop-filter: var(--backdrop-blur);
+  box-shadow: var(--shadow-chrome);
+}
+
+.tabular-nums { font-variant-numeric: tabular-nums; }

@@ -34,3 +34,12 @@ dist/
 *.cap
 *.bin
 sslkeys.log
+.venv-build/
+
+# Tauri 2 & React UI build artifacts
+ui/node_modules/
+ui/dist/
+src-tauri/target/
+src-tauri/binaries/ppstudio-backend*
+build/
+dist/

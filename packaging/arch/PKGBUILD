@@ -1,0 +1,20 @@
+# Maintainer: Raulx7i
+pkgname=packet-payload-studio
+pkgver=2.0.0
+pkgrel=1
+pkgdesc="Cross-platform network payload conversion, analysis, and PCAP stream workbench"
+arch=('x86_64' 'aarch64')
+url="https://github.com/Raulx7i/Packet-Payload-Studio"
+license=('MIT')
+depends=('webkit2gtk-4.1' 'gtk3' 'libsoup3')
+makedepends=('rust' 'cargo' 'nodejs' 'npm' 'python' 'python-pyinstaller')
+
+build() {
+  cd "$startdir/../.."
+  pyinstaller --noconfirm --clean packaging/ppstudio-backend.spec
+  TARGET_TRIPLE=$(rustc -vV | awk '/host:/ {print $2}')
+  mkdir -p src-tauri/binaries
+  cp dist/ppstudio-backend "src-tauri/binaries/ppstudio-backend-${TARGET_TRIPLE}"
+  npm --prefix ui ci
+  npx --prefix ui tauri build --bundles deb
+}
