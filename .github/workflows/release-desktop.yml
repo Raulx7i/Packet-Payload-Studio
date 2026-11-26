@@ -47,11 +47,12 @@ jobs:
           python -m pip install pyinstaller
           pyinstaller --noconfirm --clean packaging/ppstudio-backend.spec
           mkdir -p src-tauri/binaries
+          TARGET=$(rustc -vV | awk '/host:/ {print $2}')
           if [ "$RUNNER_OS" == "Windows" ]; then
-            cp dist/ppstudio-backend.exe "src-tauri/binaries/ppstudio-backend-${{ matrix.target }}.exe"
+            cp dist/ppstudio-backend.exe "src-tauri/binaries/ppstudio-backend-${TARGET}.exe"
           else
-            cp dist/ppstudio-backend "src-tauri/binaries/ppstudio-backend-${{ matrix.target }}"
-            chmod +x "src-tauri/binaries/ppstudio-backend-${{ matrix.target }}"
+            cp dist/ppstudio-backend "src-tauri/binaries/ppstudio-backend-${TARGET}"
+            chmod +x "src-tauri/binaries/ppstudio-backend-${TARGET}"
           fi
 
       - name: Build Tauri bundle
